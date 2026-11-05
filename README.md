@@ -1,18 +1,20 @@
 # MD-WEB 16
 
-ブラウザで動く 16 トラックの DSP ドラムマシンです。Machinedrum 風のパネルで、AfterBirth（`../rebirth-web`）と同じ方法で作っています。DSP は AssemblyScript（`assembly/md.ts`）と TS（`src/dsp/md.ts`）の 2 本立てで、両者の出力が一致することをユニットテストで確認しています。AudioWorklet で動き、ランタイム依存はありません。
+A 16-track DSP drum machine in the browser, with a Machinedrum-style panel. It is built the same way as AfterBirth (rebirth-web): the DSP is written twice, once in AssemblyScript (`assembly/md.ts`) and once in TypeScript (`src/dsp/md.ts`), and a unit test checks that both render the same samples. It runs in an AudioWorklet and has no runtime dependencies.
 
 ```sh
 npm install
 npm run dev     # http://localhost:5173
-npm run check   # 型チェック + ユニットテスト + build + Playwright
+npm run check   # typecheck + unit tests + build + Playwright
 ```
 
-- マシン: GND-SN/NS/IM, TRX-BD/SD/CH/OH/CP, EFM-BD/SD/CB/HH（すべて合成。サンプルは使っていません）
-- トラックチェイン: AMD/AMF → EQF/EQG → FLTF/FLTW/FLTQ → SRR → DIST → VOL/PAN
-- トリガーキーをクリック = ON/OFF、押したままエンコーダを回す = パラメータロック
-- パターンとキットは localStorage に自動保存されます
+- Machines: GND-SN/NS/IM, TRX-BD/SD/CH/OH/CP, EFM-BD/SD/CB/HH (all synthesized, no samples)
+- Track chain: AMD/AMF → EQF/EQG → FLTF/FLTW/FLTQ → SRR → DIST → VOL/PAN → DEL/REV sends
+- Master effects: Rhythm Echo (tempo-synced delay) and Gate Box (gated reverb)
+- Click a track name to select it; click a trig key to toggle a step; hold a trig and turn an encoder for a parameter lock
+- DEMO plays a built-in song
+- The pattern and kit are saved to localStorage automatically
 
 ## Disclaimer
 
-非公式のファンプロジェクトです。Elektron とは関係ありません。
+This is an unofficial fan project. It is not affiliated with Elektron.
