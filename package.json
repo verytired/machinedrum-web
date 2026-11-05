@@ -1,0 +1,24 @@
+{
+  "name": "md-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run asbuild && vite",
+    "build": "npm run asbuild && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit && asc assembly/md.ts --noEmit",
+    "test": "npm run asbuild && vitest run",
+    "e2e": "playwright test",
+    "check": "npm run typecheck && npm test && npm run build && npm run e2e",
+    "asbuild": "asc assembly/md.ts -o src/dsp/md.wasm --runtime stub --use abort= -O3 --initialMemory 1 --maximumMemory 1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.6",
+    "assemblyscript": "^0.28.20",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

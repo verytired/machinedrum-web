@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MD-WEB 16</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+<div class="md">
+  <div class="top">
+    <div class="brand">MD&middot;WEB<small>16 TRACK DSP DRUM MACHINE</small></div>
+    <div class="lcd" id="lcd" aria-live="polite">
+      <div class="l1"><span id="ltrack"></span><button id="mprev" aria-label="previous machine">◀</button><span id="lmach"></span><button id="mnext" aria-label="next machine">▶</button><span id="lengine"></span></div>
+      <div class="grid" id="lgrid"></div>
+      <div class="l4" id="lstat"></div>
+    </div>
+    <div class="encs" id="encs"></div>
+    <div class="side">
+      <label>LEVEL<div class="enc big" id="level"></div></label>
+      <label>TEMPO<span id="tempo"></span></label>
+    </div>
+  </div>
+  <div class="mid">
+    <div class="pages">
+      <button class="key" data-page="0"><i></i>SYNTHESIS</button>
+      <button class="key" data-page="1"><i></i>EFFECTS</button>
+      <button class="key" data-page="2"><i></i>ROUTING</button>
+      <button class="key" data-page="3"><i></i>ECHO</button>
+      <button class="key" data-page="4"><i></i>GATE BOX</button>
+    </div>
+    <div class="hint">CLICK TRIG = ON/OFF &middot; HOLD TRIG + TURN = PARAMETER LOCK (MOUSE: DRAG OFF THE TRIG TO LATCH IT) &middot; DOUBLE-CLICK ENCODER = RESET</div>
+    <div class="transport">
+      <button class="key" id="demo">DEMO</button>
+      <button class="key" id="clear">CLEAR TRK</button>
+      <button class="key play" id="play" aria-label="play"><i></i>▶</button>
+      <button class="key" id="stop" aria-label="stop">■</button>
+    </div>
+  </div>
+  <div class="tracks" id="tracks"></div>
+  <div class="trigs" id="trigs"></div>
+</div>
+<script type="module" src="./src/main.ts"></script>
+</body>
+</html>

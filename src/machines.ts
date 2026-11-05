@@ -1,0 +1,51 @@
+// Machine table, kit/pattern state and the p-lock merge. Indices match src/dsp/md.ts
+import { NPAR } from './dsp/md';
+import { defaultFx, type Fx } from './fx';
+
+export interface Machine { name: string; labels: string[]; defs: number[] }
+const M = (name: string, labels: string, defs: number[]): Machine => ({ name, labels: labels.split(' ').concat(Array(8).fill('')).slice(0, 8), defs: defs.concat(Array(8).fill(0)).slice(0, 8) });
+
+export const MACHINES: Machine[] = [
+  M('GND-SN', 'PTCH DEC RAMP RDEC', [40, 50, 0, 30]),
+  M('GND-NS', 'DEC', [40]),
+  M('GND-IM', '', []),
+  M('TRX-BD', 'PTCH DEC RAMP RDEC STRT NOIS', [50, 60, 60, 40, 30, 10]),
+  M('TRX-SD', 'PTCH DEC BUMP BENV SNAP TONE', [50, 40, 40, 30, 90, 70]),
+  M('TRX-CH', 'PTCH DEC TONE', [64, 40, 60]),
+  M('TRX-OH', 'PTCH DEC TONE', [64, 60, 60]),
+  M('TRX-CP', 'CLPY DEC TONE', [70, 50, 64]),
+  M('EFM-BD', 'PTCH DEC RAMP RDEC MOD MFRQ MDEC', [50, 60, 50, 40, 40, 40, 30]),
+  M('EFM-SD', 'PTCH DEC NOIS NDEC MOD MFRQ MDEC HP', [50, 40, 80, 50, 40, 80, 30, 80]),
+  M('EFM-CB', 'PTCH DEC MOD MFRQ MDEC', [60, 50, 50, 90, 50]),
+  M('EFM-HH', 'PTCH DEC MOD MFRQ MDEC HP', [100, 30, 90, 110, 60, 80]),
+];
+
+// Encoder pages: SYNTH = the machine's 8, then the track chain (– = not implemented yet)
+export const FX_LABELS = ['AMD', 'AMF', 'EQF', 'EQG', 'FLTF', 'FLTW', 'FLTQ', 'SRR'];
+export const ROUTE_LABELS = ['DIST', 'VOL', 'PAN', 'DEL', 'REV', '', '', ''];
+const TRACK_DEFS = [0, 64, 64, 64, 0, 127, 0, 0, 0, 100, 64, 0, 0, 0, 0, 0];
+
+export const TRACKS = 'BD SD HT MT LT CP RS CB CH OH RC CC M1 M2 M3 M4'.split(' ');
+const KIT_MACHINES = [3, 4, 8, 8, 8, 7, 2, 10, 5, 6, 11, 1, 0, 9, 11, 0];
+
+export interface Track { m: number; p: number[] }
+export interface State { kit: Track[]; trig: boolean[][]; lock: (Record<number, number> | null | undefined)[][]; tempo: number; fx: Fx }
+
+export const trackFor = (m: number): Track => ({ m, p: MACHINES[m].defs.concat(TRACK_DEFS) });
+
+export function defaultState(): State {
+  const kit = KIT_MACHINES.map(trackFor);
+  [kit[2], kit[3], kit[4]].forEach((t, i) => { t.p[0] = 90 - i * 15; t.p[1] = 45; t.p[4] = 10; }); // HT/MT/LT as FM toms
+  const trig = TRACKS.map(() => Array<boolean>(16).fill(false));
+  [0, 4, 8, 12].forEach(i => { trig[0][i] = true; trig[9][i + 2] = true; });
+  [4, 12].forEach(i => { trig[1][i] = true; });
+  [0, 2, 4, 6, 8, 10, 12, 14].forEach(i => { trig[8][i] = true; });
+  return { kit, trig, lock: TRACKS.map(() => Array(16).fill(null)), tempo: 125, fx: defaultFx() };
+}
+
+// The kit's params with this step's p-locks on top
+export function stepParams(s: State, tr: number, step: number): number[] {
+  const p = s.kit[tr].p.slice(0, NPAR), l = s.lock[tr][step];
+  if (l) for (const k in l) p[+k] = l[k];
+  return p;
+}
