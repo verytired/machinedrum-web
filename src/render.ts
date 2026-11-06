@@ -5,7 +5,7 @@ import { MdEngine, NOUT } from './dsp/md';
 import { MnmEngine, GATE, LEN } from './dsp/mnm';
 import type { MState } from './mnm';
 import { masterFx } from './fx';
-import { stepParams, SLIDE, type State } from './machines';
+import { stepParams, SLIDE, micro, type State } from './machines';
 import { enter, next, type PatRow } from './song';
 
 export const SR = 44100;
@@ -29,9 +29,10 @@ export function songHits(st: State, mnm?: MState): { hits: Hit[]; mhits: Hit[]; 
       }
       if (!pat) continue;
       for (let tr = 0; tr < 16; tr++) if (pat.trig[tr][i] && !(r.mute >> tr & 1))
-        hits.push({ f, tr, m: st.kit[tr].m, p: stepParams({ ...st, ...pat }, tr, i), s: pat.lock[tr][i]?.[SLIDE] ? 1 : 0 });
+        hits.push({ f: f + Math.round(micro(pat.lock[tr][i]) * step * SR), tr, m: st.kit[tr].m, p: stepParams({ ...st, ...pat }, tr, i), s: pat.lock[tr][i]?.[SLIDE] ? 1 : 0 });
     }
   }
+  hits.sort((a, b) => a.f - b.f);                          // microtiming can move a hit before the step's others
   return { hits, mhits, frames: Math.round(t * SR) };
 }
 

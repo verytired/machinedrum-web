@@ -1,6 +1,6 @@
 import { $, numbox, encoder, drawEnc } from './dom';
 import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
-import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, defaultState, stepParams, type State, type Pat } from './machines';
+import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, micro, defaultState, stepParams, type State, type Pat } from './machines';
 import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
 import { songState } from './bars';
 import { FACTORY } from './presets';
@@ -118,7 +118,7 @@ function tick() {
     const t = nextT;
     if (newBar) { newBar = false; if (!bar(t)) return; step = first; }
     const i = step, ts = t + (i % 2 ? st.swing * 60 / tempo.value / 4 : 0);
-    for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) hit(tr, ts, stepParams(st, tr, i), st.lock[tr][i]?.[SLIDE] ? 1 : 0);
+    for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) hit(tr, ts + micro(st.lock[tr][i]) * 60 / tempo.value / 4, stepParams(st, tr, i), st.lock[tr][i]?.[SLIDE] ? 1 : 0);
     const mi = n16 % 16; mnm.step(n16++, ts, 60 / tempo.value / 4); // the MnM on the MD's clock
     at(t, () => { pos = i; drawSteps(); mnm.show(mi); });
     nextT += 60 / tempo.value / 4;

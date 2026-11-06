@@ -1,7 +1,7 @@
 // Building blocks for songs made of bars: track names, note -> PTCH, bar / lock / hit / note helpers, the Song type,
 // songState() (a song -> patterns + a song-mode song) and applyBar(). The factory songs themselves live in
 // src/factory/ (not in the public repo).
-import { TRACKS, SLIDE, defaultState, type Track, type State } from './machines';
+import { TRACKS, SLIDE, MICRO, defaultState, type Track, type State } from './machines';
 import type { Fx } from './fx';
 import { isPat } from './song';
 import type { MPat, MTrack } from './mnm';
@@ -23,6 +23,13 @@ export const lock = (b: Bar, tr: string, i: number, l: Lock = {}) => { b.trig[T[
 export const LV: Record<string, number> = { x: 0, o: 25, g: -45 };
 export const hits = (b: Bar, tr: string, pat: string, vol: number, f: (i: number) => Lock = () => ({})) =>
   [...pat].forEach((c, i) => { if (c !== '.') lock(b, tr, i, { [VOL]: Math.min(127, vol + LV[c]), ...f(i) }); });
+// triplets: a 12-character pattern ('x' / 'o' / 'g' / '.', 8th-note triplets across the bar) placed on the nearest
+// steps with MICRO moving each one onto its triplet position
+export const trip = (b: Bar, tr: string, pat: string, vol: number) => [...pat].forEach((c, k) => {
+  if (c === '.') return;
+  const p = k * 16 / 12, n = Math.round(p);
+  lock(b, tr, n % 16, { [VOL]: Math.min(127, vol + LV[c]), [MICRO]: 64 + Math.round((p - n) * 24) });
+});
 // note line: 16 tokens, '-' = rest, a trailing ^ = accent (brighter + louder), a leading ~ = slide (glides in from the note before)
 export const notes = (b: Bar, tr: string, line: string, lo: number, hi: number, vol: number, cut: number) =>
   line.split(' ').forEach((n, i) => {

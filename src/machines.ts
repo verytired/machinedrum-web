@@ -51,6 +51,10 @@ export function defaultState(): State {
 // The kit's params with this step's p-locks on top
 // a lock on SLIDE (beyond the 24 params) marks a slide trig: the note glides from the one before, no retrigger
 export const SLIDE = 24;
+// a lock on MICRO moves the trig off its step (microtiming): 64 = on the step, each unit 1/24 of a step either way.
+// Triplets on the 16-step grid use it. Not on the MD, so .syx export drops it
+export const MICRO = 25;
+export const micro = (l: Record<number, number> | null | undefined) => l?.[MICRO] !== undefined ? (l[MICRO] - 64) / 24 : 0;
 export function stepParams(s: State, tr: number, step: number): number[] {
   const p = s.kit[tr].p.slice(0, NPAR), l = s.lock[tr][step];
   if (l) for (const k in l) if (+k < NPAR) p[+k] = l[k];
