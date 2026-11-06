@@ -145,3 +145,37 @@ test('IMPORT of a .syx during the DEMO stops the demo', async ({ page }) => {
   await expect(page.locator('#lstat')).toHaveText(/A01 MD-WEB/);
   await expect(page.locator('#play')).not.toHaveClass(/on/);
 });
+
+test('SONG: rows play their patterns in order, the song stops at its end and survives a reload', async ({ page }) => {
+  // A02 gets a pattern of its own
+  await page.selectOption('#bank', '1');
+  await expect(page.locator('#lpat')).toHaveText('A02');
+  await page.locator('#trigs button').nth(0).click();
+  await page.click('#songkey');
+  await expect(page.locator('#lstat')).toHaveText('SONG - ADD A ROW');
+  await page.click('#addrow'); // a new row takes the current pattern
+  await page.locator('#song tr').nth(0).locator('select').selectOption('0');
+  await page.locator('#song tr').nth(0).locator('[data-f=len]').fill('4');
+  await page.locator('#song tr').nth(0).locator('[data-f=len]').dispatchEvent('change');
+  await page.click('#addrow');
+  await page.locator('#song tr').nth(1).locator('[data-f=len]').fill('4');
+  await page.locator('#song tr').nth(1).locator('[data-f=len]').dispatchEvent('change');
+  await page.click('#play');
+  await expect(page.locator('#lstat')).toContainText('SONG ROW 001 A01');
+  await expect(page.locator('#lstat')).toContainText('SONG ROW 002 A02');
+  await expect(page.locator('#play')).not.toHaveClass(/on/, { timeout: 5000 }); // END: stops by itself
+  await expect(page.locator('#lstat')).toHaveText('SONG ROW 001');
+  await page.reload();
+  await page.click('#songkey');
+  await expect(page.locator('#song tr')).toHaveCount(2);
+  await expect(page.locator('#song tr').nth(1).locator('select')).toHaveValue('1');
+});
+
+test('a save from before patterns / songs still loads as A01', async ({ page }) => {
+  await page.locator('#trigs button').nth(1).click();
+  await page.evaluate(() => { const s = JSON.parse(localStorage.getItem('md-web-v1')!); delete s.pats; delete s.pat; delete s.song; localStorage.setItem('md-web-v1', JSON.stringify(s)); });
+  await page.reload();
+  await expect(page.locator('#lpat')).toHaveText('A01');
+  await expect(page.locator('#trigs button').nth(0)).toHaveClass(/on/);
+  await expect(page.locator('#trigs button').nth(1)).toHaveClass(/on/);
+});

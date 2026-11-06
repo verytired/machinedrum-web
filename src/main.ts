@@ -1,6 +1,7 @@
 import { $, numbox } from './dom';
 import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
-import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, defaultState, stepParams, type State } from './machines';
+import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, defaultState, stepParams, type State, type Pat } from './machines';
+import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
 import { demoSong, applyBar, BARS as demoBars, type Bar } from './demo';
 import { voice, VOICES } from './voice';
 import { kitSyx, patternSyx, parseSyx, applyKit, applyPattern, patName, patKit, kitName, isEmpty, wav, type Dump } from './syx';
@@ -8,22 +9,31 @@ import type { HitMsg, SmpMsg } from './dsp/md-processor';
 import procUrl from './dsp/md-processor.ts?worker&url';
 import wasmUrl from './dsp/md.wasm?url';
 
-// ---- state (one pattern + kit, autosaved) ----
+// ---- state (kit, patterns A01-H16, song; autosaved) ----
 const KEY = 'md-web-v1';
-// shape check for anything read back (localStorage, an imported file); fills fx for old saves
+const grid = (p: Pat | null | undefined) => p?.trig?.length === 16 && p.trig.every(r => r?.length === 16)
+  && p.lock?.length === 16 && p.lock.every(r => r?.length === 16 && r.every(l => l == null || Object.values(l).every(Number.isFinite)));
+const int = (x: unknown, lo: number, hi: number) => Number.isInteger(x) && (x as number) >= lo && (x as number) <= hi;
+const rowOk = (r: any) => r?.end === true || (int(r?.loop, 0, 255) && int(r.times, 0, 64))
+  || (int(r?.pat, 0, 127) && int(r.rep, 1, 64) && int(r.of, 0, 15) && int(r.len, 1, 16) && r.of < r.len && (r.bpm === null || int(r.bpm, 30, 300)) && int(r.mute, 0, 0xffff));
+// shape check for anything read back (localStorage, an imported file); fills what older saves lack (fx, patterns, song)
 function valid(s: State | undefined): s is State {
   const ok = s?.kit?.length === 16 && s.kit.every(t => Number.isInteger(t?.m) && MACHINES[t.m] && t.p?.length === 24 && t.p.every(Number.isFinite))
-    && s.trig?.length === 16 && s.trig.every(r => r?.length === 16) && s.lock?.length === 16 && s.lock.every(r => r?.length === 16 && r.every(l => l == null || Object.values(l).every(Number.isFinite)))
-    && Number.isFinite(s.tempo);
-  if (ok) s.fx ??= defaultFx();
-  return ok;
+    && grid(s) && Number.isFinite(s.tempo);
+  if (!ok) return false;
+  s.fx ??= defaultFx();
+  if (!(s.pats?.length === 128 && s.pats.every(p => p === null || grid(p)))) s.pats = Array(128).fill(null);
+  if (!int(s.pat, 0, 127)) s.pat = 0;
+  if (!(Array.isArray(s.song) && s.song.length <= 256 && s.song.every(rowOk))) s.song = [];
+  return true;
 }
 function load(): State {
   try { const s = JSON.parse(localStorage.getItem(KEY) ?? ''); if (valid(s)) return s; } catch { /* first run */ }
   return defaultState();
 }
 const st = load();
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch { /* private mode */ } };
+const stash = () => { st.pats[st.pat] = { trig: st.trig, lock: st.lock }; };
+const save = () => { stash(); try { localStorage.setItem(KEY, JSON.stringify(st)); } catch { /* private mode */ } };
 let msg = '', cur = 0, page = 0, held = -1, heldEdited = false, latched = false, skipUp = false, pos = -1, songPos = 0, level = 100;
 
 // ---- audio ----
@@ -55,33 +65,54 @@ const hit = (tr: number, t: number, p: number[]) => node!.port.postMessage({ t, 
 
 // ---- sequencer (lookahead scheduler, as in AfterBirth's transport.ts) ----
 let playing = false, nextT = 0, step = 0, timer: ReturnType<typeof setInterval> | undefined;
-let song: Bar[] | null = null, songBar = 0, swing = 0; // swing: delay of odd 16ths, in steps (set by the demo)
+let demo: Bar[] | null = null, demoBar = 0, swing = 0; // swing: delay of odd 16ths, in steps (set by the demo)
+// song mode: sp = the song pointer while playing, songRow = where PLAY starts, cue = row picked while playing
+// pattern mode: a pattern picked while playing waits in `queued` for the end of the pattern
+let songMode = false, sp: Pos | null = null, songRow = 0, cue = -1, queued = -1, first = 0, last = 16, mute = 0, newBar = true;
+const at = (t: number, f: () => void) => setTimeout(() => { if (playing) f(); }, Math.max(0, (t - ctx!.currentTime) * 1000));
+const finish = (t: number) => { clearInterval(timer); setTimeout(() => $('stop').click(), (t - ctx!.currentTime) * 1000 + 1500); }; // let the tails ring out
+function usePat(n: number) {
+  stash();
+  const p = st.pats[n] ?? { trig: TRACKS.map(() => Array<boolean>(16).fill(false)), lock: TRACKS.map(() => Array(16).fill(null)) };
+  st.pat = n; st.trig = p.trig; st.lock = p.lock; save(); draw();
+}
+// top of a bar: the demo's next bar, the song's next row or a queued pattern. false = stop here
+function bar(t: number): boolean {
+  first = 0; last = 16; mute = 0;
+  if (demo) {
+    if (demoBar >= demo.length) { finish(t); return false; }
+    applyBar(st, demo[demoBar++]);
+    const n = demoBar; at(t, () => { songPos = n; draw(); });
+  } else if (songMode) {
+    const n = cue >= 0 ? enter(st.song, cue) : sp ? next(st.song, sp) : enter(st.song, songRow);
+    cue = -1;
+    if (!n || 'halt' in n) { songRow = n ? n.halt : 0; sp = null; at(t, draw); finish(t); return false; } // END / HALT
+    const r = st.song[n.row] as PatRow;
+    sp = n; songRow = n.row;
+    if (st.pat !== r.pat) usePat(r.pat);
+    if (r.bpm && r.bpm !== tempo.value) tempo.set(r.bpm);
+    first = r.of; last = r.len; mute = r.mute;
+    at(t, draw);
+  } else if (queued >= 0) { usePat(queued); queued = -1; }
+  return true;
+}
 function tick() {
   while (nextT < ctx!.currentTime + 0.1) {
-    const i = step, t = nextT;
-    if (song && i === 0) {
-      if (songBar >= song.length) { // end: stop scheduling, let the tails ring out
-        clearInterval(timer); song = null;
-        setTimeout(() => $('stop').click(), (t - ctx!.currentTime) * 1000 + 1500);
-        return;
-      }
-      applyBar(st, song[songBar++]);
-      const n = songBar;
-      setTimeout(() => { if (playing) { songPos = n; draw(); } }, Math.max(0, (t - ctx!.currentTime) * 1000));
-    }
-    const ts = t + (i % 2 ? swing * 60 / tempo.value / 4 : 0);
-    for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i]) hit(tr, ts, stepParams(st, tr, i));
-    setTimeout(() => { if (playing) { pos = i; drawSteps(); } }, Math.max(0, (t - ctx!.currentTime) * 1000));
+    const t = nextT;
+    if (newBar) { newBar = false; if (!bar(t)) return; step = first; }
+    const i = step, ts = t + (i % 2 ? swing * 60 / tempo.value / 4 : 0);
+    for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) hit(tr, ts, stepParams(st, tr, i));
+    at(t, () => { pos = i; drawSteps(); });
     nextT += 60 / tempo.value / 4;
-    step = (step + 1) % 16;
+    if (++step >= last) newBar = true;
   }
 }
 $('play').onclick = async () => {
   await ensureAudio();
-  if (playing) return;
-  playing = true; step = 0; nextT = ctx!.currentTime + 0.05;
+  if (playing) { if (songMode) $('stop').click(); return; } // song mode: PLAY again pauses
+  playing = true; newBar = true; nextT = ctx!.currentTime + 0.05;
   timer = setInterval(tick, 25);
-  $('play').classList.add('on');
+  $('play').classList.add('on'); draw();
 };
 $('demo').onclick = async () => {
   $('stop').click();
@@ -90,10 +121,15 @@ $('demo').onclick = async () => {
   // the demo's ROM tracks get the built-in voice samples
   await Promise.all(Object.entries(d.voices).map(([tr, w]) => setSample(TRACKS.indexOf(tr), { name: w, voice: w })));
   tempo.set(d.tempo); // saves; the demo kit/bars below are not saved unless you edit during the demo
-  st.kit = d.kit; st.fx = d.fx; applyFx(); song = d.bars; songBar = 0; songPos = 0; swing = d.swing;
+  st.kit = d.kit; st.fx = d.fx; applyFx(); demo = d.bars; demoBar = 0; songPos = 0; swing = d.swing;
   $('play').click();
 };
-$('stop').onclick = () => { node?.port.postMessage({ k: 'flush' }); playing = false; song = null; songPos = 0; swing = 0; clearInterval(timer); pos = -1; $('play').classList.remove('on'); drawSteps(); };
+// song mode: STOP holds the position, a second STOP goes back to the first row
+$('stop').onclick = () => {
+  if (!playing) songRow = 0; else if (sp) songRow = sp.row;
+  node?.port.postMessage({ k: 'flush' }); playing = false; demo = null; sp = null; cue = queued = -1; songPos = 0; swing = 0;
+  clearInterval(timer); pos = -1; $('play').classList.remove('on'); draw();
+};
 const tempo = numbox($('tempo'), 30, 300, st.tempo, v => { st.tempo = v; save(); applyFx(); });
 
 // ---- encoders ----
@@ -222,7 +258,7 @@ let dump: Dump = { kits: [], pats: [], samples: [] };
 const patSel = $('pat') as HTMLSelectElement;
 async function usePattern(i: number) {
   const p = dump.pats[i], k = p ? dump.kits.find(k => k[9] === patKit(p)) ?? dump.kits[0] : dump.kits[0];
-  if (song) $('stop').click(); // the demo would keep playing its bars on the imported kit
+  if (demo) $('stop').click(); // the demo would keep playing its bars on the imported kit
   const s = structuredClone(st);
   if (p) applyPattern(p, s);
   const slots = k ? applyKit(k, s) : [];
@@ -247,7 +283,7 @@ importer.onchange = async () => {
       dump = { kits: kits.length ? kits : dump.kits, pats: pats.length || kits.length ? pats : dump.pats, samples: [...ds.flatMap(d => d.samples), ...dump.samples] };
       patSel.replaceChildren(...dump.pats.map((p, i) => new Option(patName(p) + ' ' + kitName(dump.kits.find(k => k[9] === patKit(p)) ?? dump.kits[0] ?? new Uint8Array(26)), String(i))));
       patSel.hidden = dump.pats.length < 2;
-      await usePattern(0); return;
+      await usePattern(0); drawBank(); draw(); return;
     }
     const b = JSON.parse(await f.text()) as Bundle;
     if (b?.app !== 'machinedrum-web' || !valid(b.st) || !Array.isArray(b.samples)) throw new Error('not a machinedrum-web file');
@@ -261,10 +297,77 @@ importer.onchange = async () => {
       const voiceName = typeof x.voice === 'string' && VOICES.includes(x.voice) ? x.voice : undefined;
       if (file || voiceName) await setSample(x.tr, { name: x.name.slice(0, 12), file, voice: voiceName }).catch(() => {});
     }
-    flash('IMPORTED');
+    drawBank(); renderSong(); flash('IMPORTED');
   } catch (e) { flash('IMPORT FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
 };
 $('import').onclick = () => importer.click();
+
+// ---- patterns: A01-H16 menu, COPY / PASTE ----
+const bankSel = $('bank') as HTMLSelectElement;
+const used = (p: Pat | null) => !!p?.trig.some(r => r.some(Boolean));
+const drawBank = () => { stash(); bankSel.replaceChildren(...st.pats.map((p, n) => new Option(slotName(n) + (used(p) ? ' *' : ''), String(n)))); };
+bankSel.onchange = () => {
+  const n = +bankSel.value;
+  if (!playing) usePat(n);
+  else if (!demo && !songMode) { queued = n; draw(); } // takes over at the end of the pattern
+  else draw(); // the song / demo picks the patterns
+};
+let clip: Pat | null = null;
+$('copy').onclick = () => { clip = structuredClone({ trig: st.trig, lock: st.lock }); flash(slotName(st.pat) + ' COPIED'); };
+$('paste').onclick = () => { if (!clip) return; Object.assign(st, structuredClone(clip)); save(); flash('PASTED TO ' + slotName(st.pat)); };
+
+// ---- song editor: one row per line; the row number starts the song there (while playing: after this row) ----
+const songEl = $('song');
+const LIM: Record<string, [number, number]> = { rep: [1, 64], of: [1, 16], len: [1, 16], bpm: [30, 300], loop: [1, 256], times: [0, 64] };
+const kinds = st.pats.map((_, n) => `<option value="${n}">${slotName(n)}</option>`).join('') + '<option value="loop">LOOP</option><option value="end">END</option>';
+const num = (f: string, v: number | string, title = '') => `<input type="number" data-f="${f}" min="${LIM[f][0]}" max="${LIM[f][1]}" value="${v}" title="${title}">`;
+const newRow = (): PatRow => ({ pat: st.pat, rep: 1, of: 0, len: 16, bpm: null, mute: 0 });
+function rowHtml(r: Row, i: number) {
+  const cells = isPat(r)
+    ? `<td>×${num('rep', r.rep, 'repeats')}</td><td>OF${num('of', r.of + 1, 'first step')}</td><td>LEN${num('len', r.len, 'last step')}</td>`
+      + `<td>BPM<input type="number" data-f="bpm" min="30" max="300" value="${r.bpm ?? ''}" placeholder="---" title="empty = keep the tempo"></td>`
+      + `<td class="mut">${TRACKS.map((n, k) => `<button data-t="${k}" class="${r.mute >> k & 1 ? 'on' : ''}" title="mute ${n}">${n}</button>`).join('')}</td>`
+    : 'loop' in r ? `<td colspan="3">${r.loop < i ? 'LOOP' : r.loop > i ? 'JUMP' : 'HALT'} TO ${num('loop', r.loop + 1, 'row')}</td>`
+      + (r.loop < i ? `<td colspan="2">×${num('times', r.times, '0 = ∞')}${r.times ? '' : ' ∞'}</td>` : '<td colspan="2"></td>')
+    : '<td colspan="5"></td>';
+  return `<tr data-r="${i}"><td><button class="go" title="start here">${String(i + 1).padStart(3, '0')}</button></td><td><select data-f="kind">${kinds}</select></td>${cells}`
+    + `<td><button class="ins" title="duplicate this row below">+</button><button class="del" title="delete this row">−</button></td></tr>`;
+}
+function renderSong() {
+  songEl.innerHTML = `<table>${st.song.map(rowHtml).join('')}</table><button class="key" id="addrow">+ ROW</button>`;
+  songEl.querySelectorAll<HTMLSelectElement>('select').forEach((el, i) => { const r = st.song[i]; el.value = isPat(r) ? String(r.pat) : 'loop' in r ? 'loop' : 'end'; });
+  draw();
+}
+// rows moved by an insert / delete at i: LOOP / JUMP targets below it follow them
+const shift = (i: number, d: number) => st.song.forEach(r => { if ('loop' in r && r.loop > i) r.loop += d; });
+songEl.onchange = e => {
+  const el = e.target as HTMLInputElement, i = +el.closest('tr')!.dataset.r!, f = el.dataset.f!, r = st.song[i];
+  if (f === 'kind') st.song[i] = el.value === 'end' ? { end: true } : el.value === 'loop' ? { loop: Math.max(0, i - 1), times: 2 } : isPat(r) ? { ...r, pat: +el.value } : { ...newRow(), pat: +el.value };
+  else {
+    const [lo, hi] = LIM[f], v = el.value === '' ? null : Math.max(lo, Math.min(hi, Math.round(+el.value) || lo));
+    const o = r as unknown as Record<string, number | null>;
+    o[f] = f === 'bpm' ? v : (v ?? lo) - (f === 'of' || f === 'loop' ? 1 : 0); // OF and TO show 1-based
+    if (isPat(r) && r.of >= r.len) { if (f === 'of') r.len = r.of + 1; else r.of = r.len - 1; }
+  }
+  save(); renderSong();
+};
+songEl.onclick = e => {
+  const b = (e.target as HTMLElement).closest('button');
+  if (!b) return;
+  if (b.id === 'addrow') { if (st.song.length < 256) st.song.push(newRow()); }
+  else {
+    const i = +b.closest('tr')!.dataset.r!, r = st.song[i];
+    if (b.classList.contains('go')) { if (playing && songMode) cue = i; else songRow = i; }
+    else if (b.classList.contains('ins')) { if (st.song.length < 256) { shift(i, 1); st.song.splice(i + 1, 0, structuredClone(r)); } }
+    else if (b.classList.contains('del')) { st.song.splice(i, 1); shift(i, -1); if (songRow >= st.song.length) songRow = 0; }
+    else if (b.dataset.t && isPat(r)) r.mute ^= 1 << +b.dataset.t;
+  }
+  save(); renderSong();
+};
+$('songkey').onclick = () => {
+  $('stop').click(); songMode = !songMode; songEl.hidden = !songMode;
+  $('songkey').classList.toggle('on', songMode); renderSong();
+};
 
 // ---- track keys + trig keys ----
 const trackBtns = TRACKS.map((name, i) => {
@@ -295,6 +398,8 @@ const trigBtns = Array.from({ length: 16 }, (_, i) => {
 addEventListener('pointerup', () => { if (held >= 0 && !latched) { latched = true; draw(); } });
 
 // ---- drawing ----
+const songStat = () => !st.song.length ? 'SONG - ADD A ROW' : `SONG ROW ${String(songRow + 1).padStart(3, '0')}`
+  + (sp ? ` ${slotName(st.pat)} ${sp.left - 1 ? sp.left - 1 + ' MORE' : ''}` : playing ? ' END' : '') + (cue >= 0 ? ` > ${String(cue + 1).padStart(3, '0')}` : '');
 const pad = (n: number) => String(n).padStart(3, '0');
 function drawSteps() {
   trigBtns.forEach((b, i) => {
@@ -308,9 +413,12 @@ function draw() {
   $('ltrack').textContent = `T${String(cur + 1).padStart(2, '0')}:${TRACKS[cur].padEnd(2)}`;
   $('lmach').textContent = MACHINES[t.m].name + (t.m === ROM ? ':' + (smpName[cur] || 'EMPTY') : '');
   $('lengine').textContent = engine;
+  $('lpat').textContent = slotName(st.pat) + (queued >= 0 ? '>' + slotName(queued) : '');
+  bankSel.value = String(st.pat); bankSel.options[st.pat].text = slotName(st.pat) + (st.trig.some(r => r.some(Boolean)) ? ' *' : '');
+  songEl.querySelectorAll('tr').forEach((tr, i) => { tr.classList.toggle('cur', i === songRow); tr.classList.toggle('cue', i === cue); });
   $('lgrid').innerHTML = labs.map((lab, k) =>
     `<span class="${!lab ? 'off' : lockOf(k) !== undefined ? 'lk' : ''}"><i>${lab || '----'}</i><b>${lab ? pad(val(k)) : ''}</b></span>`).join('');
-  $('lstat').textContent = msg ? msg : held >= 0 ? `LOCK STEP ${held + 1} - TURN AN ENCODER${latched ? ' / CLICK A TRIG TO RELEASE' : ''}` : songPos ? `DEMO  BAR ${songPos}/${demoBars}` : PAGES[page];
+  $('lstat').textContent = msg ? msg : held >= 0 ? `LOCK STEP ${held + 1} - TURN AN ENCODER${latched ? ' / CLICK A TRIG TO RELEASE' : ''}` : songPos ? `DEMO  BAR ${songPos}/${demoBars}` : songMode ? songStat() : PAGES[page];
   encs.forEach((lab, k) => {
     lab.classList.toggle('off', !labs[k]);
     lab.querySelector('b')!.textContent = labs[k] || '-';
@@ -322,4 +430,5 @@ function draw() {
   drawSteps();
 }
 drawEnc(lev, level);
+drawBank();
 draw();

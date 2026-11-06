@@ -15,6 +15,7 @@ npm run check   # typecheck + unit tests + build + Playwright
 - Master effects: Rhythm Echo (tempo-synced delay) and Gate Box (gated reverb)
 - Click a track name to select it; click a trig key to toggle a step; hold a trig and turn an encoder for a parameter lock
 - DEMO plays a built-in song
+- Patterns A01-H16 (menu next to COPY / PASTE; while playing, a new pattern waits for the end of the current one). SONG mode works as on the Machinedrum: rows of PAT / ×REP / OF / LEN / BPM / track mutes, plus LOOP rows (to an earlier row ×N or ∞ = LOOP, to a later row = JUMP, to itself = HALT) and END. PLAY again pauses, STOP holds the position, STOP twice goes back to row 1. One song; all patterns share the one kit
 - The pattern and kit are saved to localStorage automatically; EXPORT / IMPORT writes and reads everything (samples included) as one JSON file
 - EXP SYX writes the kit and pattern as Machinedrum SysEx (kit dump 0x52 + 32-step pattern dump 0x67); IMPORT also reads .syx files, several at once: kits, patterns (first 16 steps; a menu picks the pattern and loads its kit) and 16-bit Sample Dump Standard samples, which go to the ROM tracks that use their slot. Machines map by name, others to the nearest one we have (E12-BD -> TRX-BD etc., an approximation) or an empty ROM; LFOs, accents, track levels and tempo are not carried. The writer matches [mddt](https://github.com/waftlord/mddt) byte for byte; the reader was checked on public hardware dumps (388 kit / pattern messages, all checksums and p-locks consistent). Writing to a real MD is still untested
 

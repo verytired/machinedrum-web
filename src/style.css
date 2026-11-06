@@ -77,3 +77,17 @@ label{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:10
   .tracks{grid-auto-flow:row}.transport{margin-left:0}
 }
 .grid i{font-style:normal}
+
+/* Song editor */
+.transport{flex-wrap:wrap}
+.song{margin-top:16px;padding:10px;border-radius:3px;background:var(--lcd-bg);color:var(--lcd-fg);font:700 12px "Courier New",monospace;overflow-x:auto}
+.song table{border-collapse:collapse;margin-bottom:8px}
+.song td{padding:2px 6px;white-space:nowrap}
+.song tr.cur{background:#2a3f63}
+.song tr.cue .go{outline:1px dashed var(--lcd-fg)}
+.song button,.song select,.song input{font:inherit;background:#0d1626;color:var(--lcd-fg);border:1px solid var(--lcd-dim);border-radius:2px;padding:1px 4px}
+.song input{width:4.5em;margin-left:4px}
+.song .mut{display:flex;gap:2px}
+.song .mut button{font-size:9px;padding:1px 2px;width:2.4em}
+.song .mut button.on{background:var(--red);color:#000}
+.song .key{font-family:inherit}

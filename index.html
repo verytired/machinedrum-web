@@ -12,7 +12,7 @@
   <div class="top">
     <div class="brand">MD&middot;WEB<small>16 TRACK DSP DRUM MACHINE</small></div>
     <div class="lcd" id="lcd" aria-live="polite">
-      <div class="l1"><span id="ltrack"></span><button id="mprev" aria-label="previous machine">◀</button><span id="lmach"></span><button id="mnext" aria-label="next machine">▶</button><span id="lengine"></span></div>
+      <div class="l1"><span id="ltrack"></span><button id="mprev" aria-label="previous machine">◀</button><span id="lmach"></span><button id="mnext" aria-label="next machine">▶</button><span id="lpat"></span><span id="lengine"></span></div>
       <div class="grid" id="lgrid"></div>
       <div class="l4" id="lstat"></div>
     </div>
@@ -32,6 +32,10 @@
     </div>
     <div class="hint">CLICK TRIG = ON/OFF &middot; HOLD TRIG + TURN = PARAMETER LOCK (MOUSE: DRAG OFF THE TRIG TO LATCH IT) &middot; DOUBLE-CLICK ENCODER = RESET &middot; DROP A WAV ON A TRACK KEY = ROM SAMPLE</div>
     <div class="transport">
+      <select class="key" id="bank" title="pattern A01-H16 (while playing, the change waits for the end of the pattern)"></select>
+      <button class="key" id="copy" title="copy this pattern">COPY</button>
+      <button class="key" id="paste" title="paste the copied pattern over this one">PASTE</button>
+      <button class="key" id="songkey" title="song mode: PLAY plays the song (again = pause), STOP holds, STOP twice = back to row 1"><i></i>SONG</button>
       <button class="key" id="demo">DEMO</button>
       <button class="key" id="export" title="save pattern, kit, tempo, effects and samples to a JSON file">EXPORT</button>
       <button class="key" id="syx" title="save kit + pattern as Machinedrum SysEx (.syx)">EXP SYX</button>
@@ -45,6 +49,7 @@
   </div>
   <div class="tracks" id="tracks"></div>
   <div class="trigs" id="trigs"></div>
+  <div class="song" id="song" hidden></div>
 </div>
 <script type="module" src="./src/main.ts"></script>
 </body>
