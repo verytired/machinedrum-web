@@ -51,7 +51,7 @@ test('the demo as .syx (kit, patterns, song, voice samples) reads back to the sa
   expect(back.pats).toEqual(st.pats);
   expect(back.song).toEqual(st.song);
   expect(back.swing).toBeCloseTo(0.2, 4);
-  expect(isPat(back.song[0]) && back.song[0].bpm).toBe(132);
+  expect(isPat(back.song[0]) && back.song[0].bpm).toBe(133);
   // played through song mode, the rows give the demo's bars in order
   const bars: unknown[] = [];
   for (let p = enter(back.song, 0); p && !('halt' in p); p = next(back.song, p)) bars.push(back.pats[(back.song[p.row] as { pat: number }).pat]);

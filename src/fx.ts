@@ -20,7 +20,7 @@ export function gateIR(fs: number, atck: number, hold: number, dec: number, rnd 
   });
 }
 
-export function masterFx(ctx: AudioContext, dest: AudioNode) {
+export function masterFx(ctx: BaseAudioContext, dest: AudioNode) {
   const echoIn = new GainNode(ctx), dl = new DelayNode(ctx, { maxDelayTime: 4 }), fb = new GainNode(ctx), eOut = new GainNode(ctx);
   const ehp = new BiquadFilterNode(ctx, { type: 'highpass' }), elp = new BiquadFilterNode(ctx, { type: 'lowpass' });
   echoIn.connect(dl).connect(ehp).connect(elp);

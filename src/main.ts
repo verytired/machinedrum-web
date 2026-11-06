@@ -4,6 +4,7 @@ import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, defaultState, stepPar
 import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
 import { songState } from './demo';
 import { FACTORY } from './songs';
+import { renderWav } from './render';
 import { voice, VOICES } from './voice';
 import { stateSyx, parseSyx, applyKit, readPattern, readSong, patName, patKit, kitName, isEmpty, wav, type Dump, type Sample } from './syx';
 import type { HitMsg, SmpMsg } from './dsp/md-processor';
@@ -321,6 +322,28 @@ importer.onchange = async () => {
 };
 $('import').onclick = () => importer.click();
 
+// ---- EXP WAV: the song rendered off line (song mode's rows, the master effects, LEVEL and the limiter) ----
+$('wav').onclick = async () => {
+  if (!st.song.length) { flash('WAV: MAKE A SONG FIRST (SONG MODE)'); return; }
+  msg = 'RENDERING...'; draw(); await new Promise(r => setTimeout(r, 30)); // let the LCD show it before the CPU is busy
+  try {
+    stash(); await restored;
+    const smp = await Promise.all(saved.map((x, tr) => x && st.kit[tr].m === ROM ? pcm(x).then(s => s.d).catch(() => undefined) : undefined));
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(await renderWav(st, smp, level)), download: `machinedrum-${new Date().toISOString().slice(0, 10)}.wav` });
+    a.click(); URL.revokeObjectURL(a.href);
+    flash('WAV EXPORTED');
+  } catch (e) { flash('WAV FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
+};
+
+// ---- VOICE: a built-in voice on the selected ROM track ----
+const voiceSel = $('voice') as HTMLSelectElement;
+voiceSel.replaceChildren(new Option('VOICE', ''), ...VOICES.map(v => new Option(v, v)));
+voiceSel.onchange = async () => {
+  const v = voiceSel.value; voiceSel.value = '';
+  if (!v) return;
+  await ensureAudio(); await setSample(cur, { name: v, voice: v }); draw();
+};
+
 // ---- FACTORY: load one of the factory songs (replaces the kit, patterns, song and samples) ----
 const facSel = $('factory') as HTMLSelectElement;
 facSel.replaceChildren(new Option('FACTORY', ''), ...FACTORY.map((f, i) => new Option(f().name, String(i))));
@@ -446,6 +469,7 @@ function draw() {
   const t = st.kit[cur], labs = labels();
   $('ltrack').textContent = `T${String(cur + 1).padStart(2, '0')}:${TRACKS[cur].padEnd(2)}`;
   $('lmach').textContent = MACHINES[t.m].name + (t.m === ROM ? ':' + (smpName[cur] || 'EMPTY') : '');
+  voiceSel.hidden = t.m !== ROM;
   $('lengine').textContent = engine;
   $('lpat').textContent = slotName(st.pat) + (queued >= 0 ? '>' + slotName(queued) : '');
   bankSel.value = String(st.pat); bankSel.options[st.pat].text = slotName(st.pat) + (st.trig.some(r => r.some(Boolean)) ? ' *' : '');
