@@ -123,3 +123,30 @@ label{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:10
 .mnm .trigs button:nth-child(4n+1) span{color:#fff;background:var(--rust);margin:0 20%;border-radius:1px}
 .mnm .hint{color:var(--dim)}
 .mnm .num .led{background:var(--lcd-bg);color:var(--lcd-fg)}
+
+/* MD colours, after the Machinedrum SPS-1 photo on Wikipedia: silver panel with dark printing, a navy window around
+   a red-orange LCD with dark text, black keys (cream ENTER / EXIT / PASTE, red COPY), red LEDs, dark label boxes
+   under steps 1 / 5 / 9 / 13 */
+.md:not(.mnm){--body:#c1c4c8;--print:#25272a;--dim:#5f6368;--red:#ff3b2f;--amber:#ffb020;--lcd-bg:#e2451f;--lcd-fg:#2a0904;--lcd-dim:#8a2a14;
+  background:linear-gradient(#dde0e3,var(--body) 60%);box-shadow:0 0 0 1px #000,inset 0 1px 0 #f4f5f6,0 10px 30px #000a}
+.md:not(.mnm) .brand{color:#1d1f21}
+.md:not(.mnm) .lcd{text-shadow:none;border:12px solid #1c2044;box-shadow:inset 0 0 14px #0006}
+.md:not(.mnm) .lcd button{color:var(--lcd-fg)}
+.md:not(.mnm) .enc{background:radial-gradient(circle at 40% 35%,#3a3c40,#0e0f10 70%)}
+.md:not(.mnm) .key{background:linear-gradient(#2e3033,#151618);color:#e6e8ea;box-shadow:inset 0 1px 0 #4a4d52,0 2px 0 #000}
+.md:not(.mnm) #stop,.md:not(.mnm) #paste{background:linear-gradient(#efe9d6,#d4ccb4);color:#222}
+.md:not(.mnm) #copy{background:linear-gradient(#e2506a,#b83048);color:#fff}
+.md:not(.mnm) .key i,.md:not(.mnm) .tracks button::before,.md:not(.mnm) .trigs button::after{background:#8c8f93}
+.md:not(.mnm) .key.on i,.md:not(.mnm) .tracks button.sel::before,.md:not(.mnm) .trigs button.on::after{background:var(--red)}
+.md:not(.mnm) .play.on i{background:#4cff5a}
+.md:not(.mnm) .trigs button.lock::after{background:var(--amber)}
+.md:not(.mnm) .tracks button{color:var(--print)}
+.md:not(.mnm) .tracks button.hit{color:var(--red)}
+.md:not(.mnm) .trigs button,.md:not(.mnm) .trigs button:nth-child(4n+1){background:linear-gradient(#2e3033,#151618);box-shadow:inset 0 1px 0 #4a4d52,0 3px 0 #000}
+.md:not(.mnm) .trigs button span{color:#b8bbbf}
+.md:not(.mnm) .trigs button:nth-child(4n+1) span{color:#fff;background:#1d1f21;margin:0 20%;border-radius:1px;outline:1px solid #8c8f93}
+.md:not(.mnm) .num .led{background:var(--lcd-bg);color:var(--lcd-fg)}
+.md:not(.mnm) .song{border:6px solid #1c2044}
+.md:not(.mnm) .song tr.cur{background:#f5774f}
+.md:not(.mnm) .song button,.md:not(.mnm) .song select,.md:not(.mnm) .song input{background:#f06a42;color:var(--lcd-fg);border-color:var(--lcd-dim)}
+.md:not(.mnm) .song .mut button.on{background:var(--lcd-fg);color:var(--lcd-bg)}
