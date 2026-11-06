@@ -33,7 +33,8 @@ const KIT_MACHINES = [3, 4, 8, 8, 8, 7, 2, 10, 5, 6, 11, 1, 0, 9, 11, 0];
 export interface Track { m: number; p: number[] }
 export interface Pat { trig: boolean[][]; lock: (Record<number, number> | null | undefined)[][] }
 // trig / lock: the pattern being played and edited (pats[pat] is synced to it on save); pats: A01-H16, null = never used
-export interface State extends Pat { kit: Track[]; tempo: number; fx: Fx; pats: (Pat | null)[]; pat: number; song: Row[] }
+// swing: delay of the odd 16ths, in steps (0-0.6)
+export interface State extends Pat { kit: Track[]; tempo: number; swing: number; fx: Fx; pats: (Pat | null)[]; pat: number; song: Row[] }
 
 export const trackFor = (m: number): Track => ({ m, p: MACHINES[m].defs.concat(TRACK_DEFS) });
 
@@ -44,7 +45,7 @@ export function defaultState(): State {
   [0, 4, 8, 12].forEach(i => { trig[0][i] = true; trig[9][i + 2] = true; });
   [4, 12].forEach(i => { trig[1][i] = true; });
   [0, 2, 4, 6, 8, 10, 12, 14].forEach(i => { trig[8][i] = true; });
-  return { kit, trig, lock: TRACKS.map(() => Array(16).fill(null)), tempo: 125, fx: defaultFx(), pats: Array(128).fill(null), pat: 0, song: [] };
+  return { kit, trig, lock: TRACKS.map(() => Array(16).fill(null)), tempo: 125, swing: 0, fx: defaultFx(), pats: Array(128).fill(null), pat: 0, song: [] };
 }
 
 // The kit's params with this step's p-locks on top

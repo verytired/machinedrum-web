@@ -2,9 +2,9 @@ import { $, numbox } from './dom';
 import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, defaultState, stepParams, type State, type Pat } from './machines';
 import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
-import { demoSong, applyBar, BARS as demoBars, type Bar } from './demo';
+import { demoSong, demoState, applyBar, BARS as demoBars, type Bar } from './demo';
 import { voice, VOICES } from './voice';
-import { kitSyx, patternSyx, parseSyx, applyKit, applyPattern, patName, patKit, kitName, isEmpty, wav, type Dump } from './syx';
+import { stateSyx, parseSyx, applyKit, readPattern, readSong, patName, patKit, kitName, isEmpty, wav, type Dump, type Sample } from './syx';
 import type { HitMsg, SmpMsg } from './dsp/md-processor';
 import procUrl from './dsp/md-processor.ts?worker&url';
 import wasmUrl from './dsp/md.wasm?url';
@@ -24,6 +24,7 @@ function valid(s: State | undefined): s is State {
   s.fx ??= defaultFx();
   if (!(s.pats?.length === 128 && s.pats.every(p => p === null || grid(p)))) s.pats = Array(128).fill(null);
   if (!int(s.pat, 0, 127)) s.pat = 0;
+  if (!(Number.isFinite(s.swing) && s.swing >= 0 && s.swing <= 0.6)) s.swing = 0;
   if (!(Array.isArray(s.song) && s.song.length <= 256 && s.song.every(rowOk))) s.song = [];
   return true;
 }
@@ -65,7 +66,7 @@ const hit = (tr: number, t: number, p: number[]) => node!.port.postMessage({ t, 
 
 // ---- sequencer (lookahead scheduler, as in AfterBirth's transport.ts) ----
 let playing = false, nextT = 0, step = 0, timer: ReturnType<typeof setInterval> | undefined;
-let demo: Bar[] | null = null, demoBar = 0, swing = 0; // swing: delay of odd 16ths, in steps (set by the demo)
+let demo: Bar[] | null = null, demoBar = 0, swing = 0; // swing: the demo's (st.swing otherwise)
 // song mode: sp = the song pointer while playing, songRow = where PLAY starts, cue = row picked while playing
 // pattern mode: a pattern picked while playing waits in `queued` for the end of the pattern
 let songMode = false, sp: Pos | null = null, songRow = 0, cue = -1, queued = -1, first = 0, last = 16, mute = 0, newBar = true;
@@ -100,7 +101,7 @@ function tick() {
   while (nextT < ctx!.currentTime + 0.1) {
     const t = nextT;
     if (newBar) { newBar = false; if (!bar(t)) return; step = first; }
-    const i = step, ts = t + (i % 2 ? swing * 60 / tempo.value / 4 : 0);
+    const i = step, ts = t + (i % 2 ? (demo ? swing : st.swing) * 60 / tempo.value / 4 : 0);
     for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) hit(tr, ts, stepParams(st, tr, i));
     at(t, () => { pos = i; drawSteps(); });
     nextT += 60 / tempo.value / 4;
@@ -245,24 +246,37 @@ $('export').onclick = async () => {
   a.click(); URL.revokeObjectURL(a.href);
   flash('EXPORTED');
 };
-// .syx for a real Machinedrum (send it with C6 / mddt): kit + pattern, see src/syx.ts for what carries over
-$('syx').onclick = () => {
+// .syx for a real Machinedrum (send it with C6 / mddt): kit, used patterns, song, ROM samples; see src/syx.ts for what carries over.
+// During the DEMO it writes the demo (as a song), so IMPORT + SONG + PLAY plays it back.
+const SR = 44100;
+async function pcm(x: Saved): Promise<Sample> {
+  if (x.voice) return { slot: 0, rate: SR, d: voice(x.voice, SR) };
+  const ab = await new OfflineAudioContext(1, 1, SR).decodeAudioData(x.file!.slice(0)), d = new Float32Array(ab.length);
+  for (let c = 0; c < ab.numberOfChannels; c++) ab.getChannelData(c).forEach((v, i) => d[i] += v / ab.numberOfChannels);
+  return { slot: 0, rate: SR, d };
+}
+$('syx').onclick = async () => {
   try {
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([kitSyx(st), patternSyx(st)])), download: `machinedrum-${new Date().toISOString().slice(0, 10)}.syx` });
+    const s = demo ? demoState() : (stash(), st);
+    await restored;
+    const smp = await Promise.all(saved.map(x => x ? pcm(x).catch(() => undefined) : undefined));
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([stateSyx(s, smp)])), download: `machinedrum-${demo ? 'demo' : new Date().toISOString().slice(0, 10)}.syx` });
     a.click(); URL.revokeObjectURL(a.href);
-    flash('SYX EXPORTED');
+    flash(demo ? 'DEMO SYX EXPORTED' : 'SYX EXPORTED');
   } catch (e) { flash('SYX FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
 };
-// imported .syx files (kits, patterns, SDS samples) stay here; the PAT menu picks a pattern, its kit comes with it
-let dump: Dump = { kits: [], pats: [], samples: [] };
+// imported .syx files (kits, patterns, songs, SDS samples) stay here; patterns go to their slots, the song to SONG mode.
+// The PAT menu picks a pattern and loads its kit (we keep one kit, the MD has one per pattern)
+let dump: Dump = { kits: [], pats: [], songs: [], samples: [] };
 const patSel = $('pat') as HTMLSelectElement;
 async function usePattern(i: number) {
   const p = dump.pats[i], k = p ? dump.kits.find(k => k[9] === patKit(p)) ?? dump.kits[0] : dump.kits[0];
   if (demo) $('stop').click(); // the demo would keep playing its bars on the imported kit
   const s = structuredClone(st);
-  if (p) applyPattern(p, s);
   const slots = k ? applyKit(k, s) : [];
-  Object.assign(st, s); save(); applyFx();
+  Object.assign(st, s);
+  if (p) { st.pat = p[9] & 0x7f; Object.assign(st, structuredClone(st.pats[st.pat]!)); } // not usePat: its stash() would write the old pattern over the imported one
+  save(); applyFx();
   await ensureAudio();
   for (const [tr, slot] of slots.entries()) {
     const x = dump.samples.find(x => x.slot === slot);
@@ -280,10 +294,16 @@ importer.onchange = async () => {
     const bufs = await Promise.all(files.map(async f => new Uint8Array(await f.arrayBuffer())));
     if (bufs.every(b => b[0] === 0xf0)) {   // .syx: kits / patterns replace the previous ones, samples add up
       const ds = bufs.map(parseSyx), kits = ds.flatMap(d => d.kits), pats = ds.flatMap(d => d.pats).filter(p => !isEmpty(p));
-      dump = { kits: kits.length ? kits : dump.kits, pats: pats.length || kits.length ? pats : dump.pats, samples: [...ds.flatMap(d => d.samples), ...dump.samples] };
+      dump = { kits: kits.length ? kits : dump.kits, pats: pats.length || kits.length ? pats : dump.pats, songs: [], samples: [...ds.flatMap(d => d.samples), ...dump.samples] };
+      if (demo) $('stop').click();
+      stash();
+      for (const p of ds.flatMap(d => d.pats)) { const { trig, lock } = readPattern(p); st.pats[p[9] & 0x7f] = { trig, lock }; }
+      if (pats.length) st.swing = readPattern(pats[0]).swing;
+      const songs = ds.flatMap(d => d.songs);
+      if (songs.length) { st.song = readSong(songs[0]); const r = st.song[0]; if (isPat(r) && r.bpm) tempo.set(r.bpm); }
       patSel.replaceChildren(...dump.pats.map((p, i) => new Option(patName(p) + ' ' + kitName(dump.kits.find(k => k[9] === patKit(p)) ?? dump.kits[0] ?? new Uint8Array(26)), String(i))));
       patSel.hidden = dump.pats.length < 2;
-      await usePattern(0); drawBank(); draw(); return;
+      await usePattern(0); drawBank(); renderSong(); return;
     }
     const b = JSON.parse(await f.text()) as Bundle;
     if (b?.app !== 'machinedrum-web' || !valid(b.st) || !Array.isArray(b.samples)) throw new Error('not a machinedrum-web file');

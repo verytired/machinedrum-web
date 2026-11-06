@@ -179,3 +179,27 @@ test('a save from before patterns / songs still loads as A01', async ({ page }) 
   await expect(page.locator('#trigs button').nth(0)).toHaveClass(/on/);
   await expect(page.locator('#trigs button').nth(1)).toHaveClass(/on/);
 });
+
+test('DEMO as .syx: EXP SYX during the demo, IMPORT it, SONG + PLAY plays it', async ({ page }) => {
+  await page.click('#demo');
+  await expect(page.locator('#play')).toHaveClass(/on/);
+  const dl = page.waitForEvent('download');
+  await page.click('#syx');
+  const d = await dl;
+  expect(d.suggestedFilename()).toBe('machinedrum-demo.syx');
+  const file = await d.path();
+  await page.click('#stop');
+  await page.evaluate(() => { localStorage.clear(); indexedDB.deleteDatabase('md-web'); });
+  await page.reload();
+  const ic = page.waitForEvent('filechooser');
+  await page.click('#import');
+  await (await ic).setFiles(file);
+  await expect(page.locator('#lstat')).toHaveText(/A01 MD-WEB/);
+  await expect(page.locator('#tempo')).toContainText('132');
+  await page.locator('#tracks button').nth(13).click();   // ROM tracks in order: RC = ROM-01, M2 = ROM-02, M3 = ROM-03
+  await expect(page.locator('#lmach')).toHaveText('ROM:ROM-02');
+  await page.click('#songkey');
+  expect(await page.locator('#song tr').count()).toBeGreaterThan(20);
+  await page.click('#play');
+  expect(await outPeak(page, 1500)).toBeGreaterThan(0.1);
+});
