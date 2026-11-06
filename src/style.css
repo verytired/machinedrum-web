@@ -91,3 +91,35 @@ label{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:10
 .song .mut button{font-size:9px;padding:1px 2px;width:2.4em}
 .song .mut button.on{background:var(--red);color:#000}
 .song .key{font-family:inherit}
+
+/* MNM panel */
+.mnm{margin-top:16px}
+#mlmach{min-width:6ch;text-align:center}
+#mlnote{margin-left:auto}
+#mlnote.lk{background:var(--lcd-fg);color:var(--lcd-bg);text-shadow:none;padding:0 4px}
+.keys{display:flex;gap:4px;margin-bottom:14px}
+.keys button{flex:1;height:56px;border:1px solid #000;border-radius:0 0 4px 4px;background:linear-gradient(#e8e8e8,#bdbdbd);color:#333;
+  font-size:9px;font-weight:800;display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px}
+.keys button.blk{background:linear-gradient(#333,#111);color:#999;height:40px}
+.keys button.on{box-shadow:inset 0 -4px 0 var(--red)}
+/* MNM colours, after the SFX60 photo on Wikipedia: brushed silver panel with dark and rust printing, a black window
+   around an olive LCD and the encoders, slate keys, cream track keys, red LEDs (yellow = lock) */
+.mnm{--body:#c3c5c4;--print:#2f3235;--dim:#6a6d70;--red:#ff3b2f;--amber:#ffc21a;--lcd-bg:#8e9483;--lcd-fg:#1e231b;--lcd-dim:#5c6355;--rust:#a5503d;
+  background:linear-gradient(#dcdddb,var(--body) 60%);box-shadow:0 0 0 1px #000,inset 0 1px 0 #f4f4f2,0 10px 30px #000a}
+.mnm .brand{color:#1d1f21}
+.mnm .lcd{text-shadow:none;border:10px solid #0c0d0e;box-shadow:inset 0 0 14px #0005}
+.mnm .lcd button{color:var(--lcd-fg)}
+.mnm .encs{padding:10px 12px;border-radius:3px;background:#0c0d0e}
+.mnm .encs label{color:#b9bcbf}
+.mnm .enc{background:radial-gradient(circle at 40% 35%,#4a525a,#1c2126 70%)}
+.mnm .key{background:linear-gradient(#4a525a,#363c43);color:#e6e8ea;box-shadow:inset 0 1px 0 #6a737c,0 2px 0 #000}
+.mnm .key i,.mnm .tracks button::before,.mnm .trigs button::after{background:#8f928e}
+.mnm .key.on i,.mnm .tracks button.sel::before,.mnm .trigs button.on::after{background:var(--red)}
+.mnm .trigs button.lock::after{background:var(--amber)}
+.mnm .tracks button{color:var(--rust)}
+.mnm .tracks button.hit{color:#000}
+.mnm .trigs button,.mnm .trigs button:nth-child(4n+1){background:linear-gradient(#4a525a,#363c43);box-shadow:inset 0 1px 0 #6a737c,0 3px 0 #000}
+.mnm .trigs button span{color:#c9ccd0}
+.mnm .trigs button:nth-child(4n+1) span{color:#fff;background:var(--rust);margin:0 20%;border-radius:1px}
+.mnm .hint{color:var(--dim)}
+.mnm .num .led{background:var(--lcd-bg);color:var(--lcd-fg)}
