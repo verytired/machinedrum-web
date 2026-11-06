@@ -1,6 +1,6 @@
 // Built-in "voice" samples for the ROM machine, made by formant synthesis (no recorded audio): a glottal
 // pulse (+ aspiration noise for the h) through three resonators that glide between vowel targets.
-// ponytail: three formants and linear glides, so it shouts like a robot; good enough chopped up in a demo
+// ponytail: formants on linear glides between keyframes; a real sampled voice still sounds more human
 type Key = [t: number, f1: number, f2: number, f3: number, voiced: number, noise: number];
 const WORDS: Record<string, { f0: [number, number]; k: Key[] }> = {
   // HEY: a loud h, a voiced burst above full level (the tanh squashes it), pitch falling hard like a shout, cut off sharp
@@ -74,25 +74,49 @@ const WORDS: Record<string, { f0: [number, number]; k: Key[] }> = {
 export const VOICES = Object.keys(WORDS);
 const SPEED = 0.7, LIFT = 1.3; // shorter and higher than the keyframes: a quick shout, not a drawl
 
-export function voice(word: string, fs: number, rnd = Math.random): Float32Array {
+// One RBJ band-pass (0 dB at its peak) step; q holds its state [x1, x2, y1, y2]
+function bp(q: number[], x: number, f: number, bw: number, fs: number) {
+  const w = 2 * Math.PI * Math.min(f, fs * 0.45) / fs, al = Math.sin(w) * bw / (2 * f), a0 = 1 + al, c = -2 * Math.cos(w) / a0, d = (1 - al) / a0, g = al / a0;
+  const v = g * x - g * q[1] - c * q[2] - d * q[3];
+  q[1] = q[0]; q[0] = x; q[3] = q[2]; q[2] = v;
+  return v;
+}
+
+// lofi: the word as it comes out of a late-80s / 90s sampler (SP-1200-style 26.04 kHz without interpolation, 12 bits, a
+// little drive) - the Chicago / ghetto house sound of a shout sampled and pitched
+export function voice(word: string, fs: number, rnd = Math.random, lofi = true): Float32Array {
   const w = WORDS[word], f0 = w.f0.map(f => f * LIFT), k = w.k.map(([t, ...r]) => [t * SPEED, ...r] as Key), len = k[k.length - 1][0], n = Math.round(len * fs), out = new Float32Array(n);
-  const bw = [90, 120, 170], gain = [1, 0.8, 0.5], st = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
-  let ph = 0, pk = 0, j = 0;
+  const bw = [80, 110, 160, 250, 300], gain = [1, 0.8, 0.55, 0.25, 0.15], st = Array.from({ length: 7 }, () => [0, 0, 0, 0]);
+  let ph = 0, pk = 0, j = 0, jit = 0, shim = 1, prev = 0;
   for (let i = 0; i < n; i++) {
     const t = i / fs;
     while (j < k.length - 2 && t > k[j + 1][0]) j++;
     const a = k[j], b = k[j + 1], u = Math.min(1, (t - a[0]) / (b[0] - a[0])), at = (m: number) => a[m] + (b[m] - a[m]) * u;
-    const vib = 1 + 0.015 * Math.sin(2 * Math.PI * 5.5 * t); // a little wobble keeps it human
-    ph += (f0[0] + (f0[1] - f0[0]) * t / len) * vib / fs; if (ph >= 1) ph -= 1;
-    const src = (1 - 2 * ph) * at(4) + (rnd() * 2 - 1) * (at(5) + 0.04 * at(4)); // bright saw + breath
+    // pitch: the contour, a vibrato and a little jitter; the amplitude gets a little shimmer per period
+    jit += ((rnd() * 2 - 1) * 0.012 - jit) * 0.002;
+    const vib = 1 + 0.015 * Math.sin(2 * Math.PI * 5.5 * t) + jit;
+    ph += (f0[0] + (f0[1] - f0[0]) * t / len) * vib / fs;
+    if (ph >= 1) { ph -= 1; shim = 1 + (rnd() * 2 - 1) * 0.06; }
+    // a Rosenberg glottal pulse (open 40 %, closing 16 %), differentiated, with some saw kept for edge
+    const g = ph < 0.4 ? 0.5 * (1 - Math.cos(Math.PI * ph / 0.4)) : ph < 0.56 ? Math.cos(Math.PI * (ph - 0.4) / 0.32) : 0;
+    const glot = (g - prev) * fs / (f0[0] * 4); prev = g;
+    const voiced = (0.75 * glot + 0.35 * (1 - 2 * ph)) * at(4) * shim, nz = rnd() * 2 - 1;
+    // h and breath go through the vowel's formants; a fricative (its keyframe formants pushed above 2 kHz) gets a wide band
+    const fric = at(1) > 2000, src = voiced + nz * (fric ? 0.02 : at(5) + 0.04 * at(4));
     let y = 0;
-    for (let f = 0; f < 3; f++) { // RBJ band-pass at the formant, 0 dB at its peak
-      const w = 2 * Math.PI * at(f + 1) / fs, al = Math.sin(w) * bw[f] / (2 * at(f + 1)), a0 = 1 + al, c = -2 * Math.cos(w) / a0, d = (1 - al) / a0, g = al / a0;
-      const q = st[f], v = g * src - g * q[1] - c * q[2] - d * q[3];
-      q[1] = q[0]; q[0] = src; q[3] = q[2]; q[2] = v;
-      y += v * gain[f];
-    }
-    out[i] = Math.tanh(y * 1.5); pk = Math.max(pk, Math.abs(out[i]));
+    for (let f = 0; f < 3; f++) y += bp(st[f], src, at(f + 1), bw[f], fs) * gain[f];
+    y += bp(st[3], voiced, 3500, bw[3], fs) * gain[3] + bp(st[4], voiced, 4500, bw[4], fs) * gain[4];   // presence
+    if (fric) y += bp(st[5], nz * at(5), (at(2) + at(3)) / 2, (at(2) + at(3)) / 2 / 1.5, fs) * 1.4;    // wide fricative noise
+    out[i] = Math.tanh(y * 1.5);
   }
+  if (lofi) {
+    const step = fs / 26040, q = 2048;
+    let hold = 0, next = 0;
+    for (let i = 0; i < n; i++) {
+      if (i >= next) { hold = Math.round(Math.tanh(out[i] * 1.3) * q) / q; next += step; }
+      out[i] = hold;
+    }
+  }
+  for (let i = 0; i < n; i++) pk = Math.max(pk, Math.abs(out[i]));
   return out.map(x => x / pk * 0.8);
 }
