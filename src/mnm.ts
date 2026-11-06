@@ -18,8 +18,13 @@ const NAMES = 'C C# D D# E F F# G G# A A# B'.split(' ');
 const noteName = (n: number) => NAMES[n % 12] + (Math.floor(n / 12) - 1);
 
 type Lock = Record<number, number> | null;
-interface MState { kit: { m: number; p: number[] }[]; trig: boolean[][]; lock: Lock[][] }
-const track = (m: number, note: number) => ({ m, p: MACHINES[m].defs.concat(TRACK_DEFS, note) });
+export interface MPat { trig: boolean[][]; lock: Lock[][] }
+export type MTrack = { m: number; p: number[] };
+// pats: a pattern per MD pattern slot (null = none: keep playing the current one), as an MNM following the MD's
+// program changes; pat = the slot of trig / lock
+export interface MState extends MPat { kit: MTrack[]; pats?: (MPat | null)[]; pat?: number }
+export const track = (m: number, note: number): MTrack => ({ m, p: MACHINES[m].defs.concat(TRACK_DEFS, note) });
+export const emptyPat = (): MPat => ({ trig: Array.from({ length: 6 }, () => Array(16).fill(false)), lock: Array.from({ length: 6 }, () => Array(16).fill(null)) });
 function defaults(): MState {
   const s: MState = { kit: [0, 1, 0, 1, 0, 1].map((m, i) => track(m, [36, 60, 48, 72, 55, 67][i])), trig: Array.from({ length: 6 }, () => Array(16).fill(false)), lock: Array.from({ length: 6 }, () => Array(16).fill(null)) };
   [2, 6, 10, 14].forEach((i, k) => { s.trig[0][i] = true; s.lock[0][i] = { [NOTE]: [36, 36, 39, 34][k] }; }); // offbeat bass
@@ -29,7 +34,8 @@ function defaults(): MState {
 }
 const KEY = 'mnm-web-v1';
 const ok = (s: MState | undefined) => s?.kit?.length === 6 && s.kit.every(t => MACHINES[t?.m] && t.p?.length === MNPAR + 1 && t.p.every(Number.isFinite))
-  && s.trig?.length === 6 && s.trig.every(r => r?.length === 16) && s.lock?.length === 6 && s.lock.every(r => r?.length === 16);
+  && s.trig?.length === 6 && s.trig.every(r => r?.length === 16) && s.lock?.length === 6 && s.lock.every(r => r?.length === 16)
+  && (s.pats === undefined || (s.pats.length === 128 && s.pats.every(p => p === null || (p.trig?.length === 6 && p.lock?.length === 6))));
 const st: MState = (() => { try { const s = JSON.parse(localStorage.getItem(KEY) ?? ''); if (ok(s)) return s; } catch { /* first run */ } return defaults(); })();
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch { /* private mode */ } };
 
@@ -42,6 +48,18 @@ export const mnm = {
   step(n: number, t: number, dur: number) { const i = n % 16; for (let tr = 0; tr < 6; tr++) if (st.trig[tr][i]) hit(tr, t, params(tr, i), dur); },
   show(i: number) { pos = i; drawSteps(); },
   flush() { this.node?.port.postMessage({ k: 'flush' }); this.show(-1); },
+  // the MD moved to pattern slot n: follow it if there is an MNM pattern there
+  usePat(n: number) {
+    const p = st.pats?.[n];
+    if (!p || st.pat === n) return;
+    st.pats![st.pat ?? 0] = { trig: st.trig, lock: st.lock };
+    Object.assign(st, { pat: n, trig: p.trig, lock: p.lock }); save(); draw();
+  },
+  // a factory song's MNM: its kit and a pattern per slot
+  load(kit: MTrack[], pats: (MPat | null)[]) { Object.assign(st, { kit, pats, pat: -1 }); Object.assign(st, emptyPat()); this.usePat(0); save(); draw(); },
+  // a factory song without an MNM part: the MNM rests
+  clear() { Object.assign(st, emptyPat(), { pats: undefined, pat: undefined }); save(); draw(); },
+  state: (): MState => st,
 };
 function params(tr: number, i: number) {
   const p = st.kit[tr].p.slice(), l = st.lock[tr][i];

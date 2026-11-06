@@ -4,6 +4,7 @@ import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, defaultState, stepPar
 import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
 import { songState } from './demo';
 import { FACTORY } from './songs';
+import { renderWav } from './render';
 import { voice, VOICES } from './voice';
 import { mnm } from './mnm';
 import { stateSyx, parseSyx, applyKit, readPattern, readSong, patName, patKit, kitName, isEmpty, wav, type Dump, type Sample } from './syx';
@@ -30,9 +31,9 @@ function valid(s: State | undefined): s is State {
   if (!(Array.isArray(s.song) && s.song.length <= 256 && s.song.every(rowOk))) s.song = [];
   return true;
 }
-// First run (nothing saved), or the page opened with ?factory (= factory reset; ?factory=2 = the 3rd factory song):
+// First run (nothing saved), or the page opened with ?factory=N (= factory reset to factory song N, 0 by default):
 // the factory content, as on the MD. A factory song is patterns from A01, the song, its kit and voice samples
-// (press SONG, then PLAY); the FACTORY menu loads another one
+// (press SONG, then PLAY)
 const fq = new URLSearchParams(location.search).get('factory');
 if (fq !== null) history.replaceState(null, '', location.pathname);
 const song0 = FACTORY[Math.max(0, Math.min(FACTORY.length - 1, parseInt(fq ?? '') || 0))]();
@@ -40,7 +41,10 @@ let fresh = false;
 function load(): State {
   if (fq === null) try { const s = JSON.parse(localStorage.getItem(KEY) ?? ''); if (valid(s)) return s; } catch { /* first run */ }
   fresh = true;
-  return songState(song0);
+  const s = songState(song0);
+  if (s.mnm) mnm.load(s.mnm.kit, s.mnm.pats); else mnm.clear(); // the MNM gets the song's part, or rests
+  delete s.mnm;
+  return s;
 }
 const st = load();
 const stash = () => { st.pats[st.pat] = { trig: st.trig, lock: st.lock }; };
@@ -90,6 +94,7 @@ function usePat(n: number) {
   stash();
   const p = st.pats[n] ?? { trig: TRACKS.map(() => Array<boolean>(16).fill(false)), lock: TRACKS.map(() => Array(16).fill(null)) };
   st.pat = n; st.trig = p.trig; st.lock = p.lock; save(); draw();
+  mnm.usePat(n); // the MNM follows the MD's pattern, as on a program change
 }
 // top of a bar: the song's next row or a queued pattern. false = stop here
 function bar(t: number): boolean {
@@ -312,19 +317,28 @@ importer.onchange = async () => {
 };
 $('import').onclick = () => importer.click();
 
-// ---- FACTORY: load one of the factory songs (replaces the kit, patterns, song and samples) ----
-const facSel = $('factory') as HTMLSelectElement;
-facSel.replaceChildren(new Option('FACTORY', ''), ...FACTORY.map((f, i) => new Option(f().name, String(i))));
-facSel.onchange = async () => {
-  const i = +facSel.value; facSel.value = '';
-  if (!facSel.options[i + 1] || !confirm(`Load the factory song ${facSel.options[i + 1].text}? The kit, patterns, song and samples are replaced.`)) return;
-  const d = FACTORY[i]();
-  $('stop').click();
-  Object.assign(st, songState(d)); save(); tempo.set(st.tempo); applyFx();
-  await ensureAudio();
-  for (let tr = 0; tr < 16; tr++) { const w = d.voices[TRACKS[tr]]; if (w) await setSample(tr, { name: w, voice: w }); else dropSample(tr); }
-  drawBank(); renderSong(); flash(d.name + ': SONG, THEN PLAY');
+// ---- EXP WAV: the song rendered off line (song mode's rows, the master effects, LEVEL and the limiter) ----
+$('wav').onclick = async () => {
+  if (!st.song.length) { flash('WAV: MAKE A SONG FIRST (SONG MODE)'); return; }
+  msg = 'RENDERING...'; draw(); await new Promise(r => setTimeout(r, 30)); // let the LCD show it before the CPU is busy
+  try {
+    stash(); await restored;
+    const smp = await Promise.all(saved.map((x, tr) => x && st.kit[tr].m === ROM ? pcm(x).then(s => s.d).catch(() => undefined) : undefined));
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(await renderWav(st, smp, level, mnm.state())), download: `machinedrum-${new Date().toISOString().slice(0, 10)}.wav` });
+    a.click(); URL.revokeObjectURL(a.href);
+    flash('WAV EXPORTED');
+  } catch (e) { flash('WAV FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
 };
+
+// ---- VOICE: a built-in voice on the selected ROM track ----
+const voiceSel = $('voice') as HTMLSelectElement;
+voiceSel.replaceChildren(new Option('VOICE', ''), ...VOICES.map(v => new Option(v, v)));
+voiceSel.onchange = async () => {
+  const v = voiceSel.value; voiceSel.value = '';
+  if (!v) return;
+  await ensureAudio(); await setSample(cur, { name: v, voice: v }); draw();
+};
+
 
 // ---- patterns: A01-H16 menu, COPY / PASTE ----
 const bankSel = $('bank') as HTMLSelectElement;
@@ -437,6 +451,7 @@ function draw() {
   const t = st.kit[cur], labs = labels();
   $('ltrack').textContent = `T${String(cur + 1).padStart(2, '0')}:${TRACKS[cur].padEnd(2)}`;
   $('lmach').textContent = MACHINES[t.m].name + (t.m === ROM ? ':' + (smpName[cur] || 'EMPTY') : '');
+  voiceSel.hidden = t.m !== ROM;
   $('lengine').textContent = engine;
   $('lpat').textContent = slotName(st.pat) + (queued >= 0 ? '>' + slotName(queued) : '');
   bankSel.value = String(st.pat); bankSel.options[st.pat].text = slotName(st.pat) + (st.trig.some(r => r.some(Boolean)) ? ' *' : '');

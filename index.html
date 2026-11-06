@@ -30,16 +30,17 @@
       <button class="key" data-page="3"><i></i>ECHO</button>
       <button class="key" data-page="4"><i></i>GATE BOX</button>
     </div>
-    <div class="hint">CLICK TRIG = ON/OFF &middot; HOLD TRIG + TURN = PARAMETER LOCK (MOUSE: DRAG OFF THE TRIG TO LATCH IT) &middot; DOUBLE-CLICK ENCODER = RESET &middot; DROP A WAV ON A TRACK KEY = ROM SAMPLE &middot; FACTORY SONGS: PICK ONE, THEN SONG + PLAY (?factory = FACTORY RESET)</div>
+    <div class="hint">CLICK TRIG = ON/OFF &middot; HOLD TRIG + TURN = PARAMETER LOCK (MOUSE: DRAG OFF THE TRIG TO LATCH IT) &middot; DOUBLE-CLICK ENCODER = RESET &middot; DROP A WAV ON A TRACK KEY = ROM SAMPLE &middot; THE FACTORY SONG: SONG, THEN PLAY (OPEN WITH ?factory=0..19 FOR ANOTHER ONE = FACTORY RESET)</div>
     <div class="transport">
       <select class="key" id="bank" title="pattern A01-H16 (while playing, the change waits for the end of the pattern)"></select>
       <button class="key" id="copy" title="copy this pattern">COPY</button>
       <button class="key" id="paste" title="paste the copied pattern over this one">PASTE</button>
       <button class="key" id="songkey" title="song mode: PLAY plays the song (again = pause), STOP holds, STOP twice = back to row 1"><i></i>SONG</button>
       <button class="key" id="export" title="save pattern, kit, tempo, effects and samples to a JSON file">EXPORT</button>
+      <button class="key" id="wav" title="render the song (song mode) to a WAV file">EXP WAV</button>
+      <select class="key" id="voice" hidden title="put a built-in voice on this ROM track"></select>
       <button class="key" id="syx" title="save kit, patterns, song and ROM samples as Machinedrum SysEx (.syx)">EXP SYX</button>
       <select class="key" id="pat" hidden title="pattern from the imported .syx (its kit comes with it)"></select>
-      <select class="key" id="factory" title="load a factory song (replaces the kit, patterns, song and samples)"></select>
       <button class="key" id="import" title="load a file saved with EXPORT, or Machinedrum .syx files (kits, patterns, SDS samples; pick several at once)">IMPORT</button>
       <button class="key" id="load" title="load a WAV into this track (or drop one on a track key)">LOAD SMP</button>
       <button class="key" id="fxreset" title="RHYTHM ECHO and GATE BOX back to their defaults">RESET FX</button>

@@ -5,6 +5,8 @@ import { MACHINES, SLIDE, trackFor, defaultState, stepParams } from '../machines
 import { applyBar, songState } from '../demo';
 import { FACTORY } from '../songs';
 import { stateSyx } from '../syx';
+import { songHits } from '../render';
+import { MnmEngine } from './mnm';
 import { gateIR } from '../fx';
 import { voice, VOICES } from '../voice';
 import { TRACKS } from '../machines';
@@ -112,7 +114,15 @@ describe('factory songs', () => {
     });
     const e = js();
     for (const [tr, w] of Object.entries(d.voices)) e.sample(TRACKS.indexOf(tr), voice(w, SR, () => 0.5));
-    const [l, r] = drive(e, hits, (d.bars.length * 16 + 8) * step);
+    const n = (d.bars.length * 16 + 8) * step, [l, r] = drive(e, hits, n);
+    const ss0 = songState(d);
+    if (ss0.mnm) {                                       // the MNM part, rendered the way EXP WAV does, on top
+      const six = () => Array.from({ length: 6 }, () => Array(16).fill(null));
+      const { mhits } = songHits(ss0, { kit: ss0.mnm.kit, pats: ss0.mnm.pats, trig: six().map(r => r.map(() => false)), lock: six() });
+      const m = drive(new MnmEngine(SR), mhits.map(h => [Math.round(h.f / 44100 * SR), h.tr, h.m, h.p] as Hit), n);
+      expect(Math.max(peak(m[0]), peak(m[1]))).toBeGreaterThan(0.05);
+      m[0].forEach((v, i) => { l[i] += v; }); m[1].forEach((v, i) => { r[i] += v; });
+    }
     const pk = Math.max(peak(l), peak(r));
     expect(Number.isFinite(pk)).toBe(true);
     expect(pk).toBeGreaterThan(0.2);
