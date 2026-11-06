@@ -9,23 +9,23 @@ export const AMD = 8, AMF = 9, EQF = 10, EQG = 11, FLTF = 12, FLTW = 13, FLTQ = 
 export const NOUT = 6; // dry L/R, echo send L/R, gate box send L/R
 export const MAXS = 1 << 18; // ROM sample length cap per track (~5.5 s at 48 kHz)
 
-export const TAU = 2 * Math.PI;
+const TAU = 2 * Math.PI;
 const LN1000 = 6.907755278982137;
 const ATTACK = 0.0003;
-export const LP = 0, BP = 1, HP = 2;
+const LP = 0, BP = 1, HP = 2;
 const METAL = [245, 306, 365, 415, 437, 619];
 
-export const coef = (fs: number, dec: number) => Math.exp(-LN1000 / (dec * fs));
-export const ex = (v: number, lo: number, hi: number) => lo * Math.pow(hi / lo, v / 127);
+const coef = (fs: number, dec: number) => Math.exp(-LN1000 / (dec * fs));
+const ex = (v: number, lo: number, hi: number) => lo * Math.pow(hi / lo, v / 127);
 
-export class Env {
+class Env {
   e = 0; h = 0; k = 1; a: number;
   constructor(private fs: number) { this.a = 1 - Math.exp(-1 / (ATTACK * fs)); }
   trig(peak: number, dec: number) { this.h = peak; this.k = coef(this.fs, dec); }
   tick(): number { this.h *= this.k; this.e += (this.h - this.e) * this.a; return this.e; }
 }
 
-export class Svf {
+class Svf {
   ic1 = 0; ic2 = 0; k = 1; a1 = 0; a2 = 0; a3 = 0; mode = LP;
   constructor(private fs: number) {}
   set(f: number, q: number, mode: number) {
@@ -57,7 +57,7 @@ class Peq {
   }
 }
 
-export function blep(t: number, dt: number): number {
+function blep(t: number, dt: number): number {
   if (t < dt) { const u = t / dt; return u + u - u * u - 1; }
   if (t > 1 - dt) { const u = (t - 1) / dt; return u * u + u + u + 1; }
   return 0;

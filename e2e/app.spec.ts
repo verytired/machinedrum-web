@@ -173,7 +173,7 @@ test('a save from before patterns / songs still loads as A01', async ({ page }) 
 test('first run = the factory song (the demo): SONG + PLAY plays it; it survives EXP SYX + IMPORT; ?factory brings it back', async ({ page }) => {
   await page.evaluate(() => { localStorage.clear(); indexedDB.deleteDatabase('md-web'); });
   await page.reload();
-  await expect(page.locator('#tempo')).toContainText('132');
+  await expect(page.locator('#tempo')).toContainText('133');
   await page.locator('#tracks button').nth(10).click();
   await expect(page.locator('#lmach')).toHaveText('ROM:YEAH');
   await page.click('#songkey');
@@ -193,7 +193,7 @@ test('first run = the factory song (the demo): SONG + PLAY plays it; it survives
   await page.click('#import');
   await (await ic).setFiles(file);
   await expect(page.locator('#lstat')).toHaveText(/A01 MD-WEB/);
-  await expect(page.locator('#tempo')).toContainText('132');
+  await expect(page.locator('#tempo')).toContainText('133');
   await page.locator('#tracks button').nth(13).click();   // ROM tracks in order: RC = ROM-01, M2 = ROM-02, M3 = ROM-03
   await expect(page.locator('#lmach')).toHaveText('ROM:ROM-02');
   expect(await page.locator('#song tr').count()).toBeGreaterThan(20);
@@ -204,7 +204,7 @@ test('first run = the factory song (the demo): SONG + PLAY plays it; it survives
   await page.evaluate(s => localStorage.setItem('md-web-v1', s), blank);
   await page.goto('./?factory');
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.locator('#tempo')).toContainText('132');
+  await expect(page.locator('#tempo')).toContainText('133');
   await page.click('#songkey');
   expect(await page.locator('#song tr').count()).toBeGreaterThan(20);
 });
@@ -233,29 +233,41 @@ test('RESET FX puts the echo and gate box back to their defaults', async ({ page
   expect(fx).toEqual({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100] });
 });
 
-test('FACTORY menu loads another factory song (after a confirm), SONG + PLAY plays it', async ({ page }) => {
-  expect(await page.locator('#factory option').count()).toBe(6); // the label + 5 songs
-  page.once('dialog', d => d.accept());
-  await page.selectOption('#factory', '1');
-  await expect(page.locator('#lstat')).toHaveText(/FACTORY SONG/);
-  await expect(page.locator('#tempo')).toContainText('133');
+test('?factory=N resets to factory song N; SONG + PLAY plays it', async ({ page }) => {
+  await page.goto('./?factory=1');                        // FACTORY SONG
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('#tempo')).toContainText('134');
+  await page.locator('#tracks button').nth(13).click();
+  await expect(page.locator('#lmach')).toHaveText('ROM:YO');
   await page.click('#songkey');
   expect(await page.locator('#song tr').count()).toBeGreaterThan(20);
   await page.click('#play');
   expect(await outPeak(page, 1500)).toBeGreaterThan(0.05);
 });
 
-test('MnM plays on the MD clock: MD PLAY runs its steps and it is heard with the MD pattern empty; a key sets the note', async ({ page }) => {
-  const s = defaultState(); s.trig.forEach(r => r.fill(false));
-  await page.evaluate(s => localStorage.setItem('md-web-v1', s), JSON.stringify(s));
+test('EXP WAV renders the song to a 16-bit stereo WAV', async ({ page }) => {
+  await page.goto('./?factory=5');                        // FACTORY SONG
+  await expect(page.locator('#tempo')).toContainText('133');
+  const dl = page.waitForEvent('download', { timeout: 120000 });
+  await page.click('#wav');
+  const b = (await import('fs')).readFileSync(await (await dl).path());
+  expect(b.toString('ascii', 0, 4) + b.toString('ascii', 8, 12)).toBe('RIFFWAVE');
+  expect([b.readUInt16LE(22), b.readUInt32LE(24), b.readUInt16LE(34)]).toEqual([2, 44100, 16]);
+  const secs = b.readUInt32LE(40) / 4 / 44100;
+  expect(secs).toBeGreaterThan(5.2 * 60);                 // the whole song (~5:17) plus a tail
+  let pk = 0; for (let i = 44 + 44100 * 4 * 60; i < 44 + 44100 * 4 * 61; i += 2) pk = Math.max(pk, Math.abs(b.readInt16LE(i)));
+  expect(pk).toBeGreaterThan(3000);                       // a minute in, it plays
+  await expect(page.locator('#lstat')).toHaveText('WAV EXPORTED');
+});
+
+test('VOICE menu puts a built-in voice on a ROM track (hidden on other machines)', async ({ page }) => {
+  await expect(page.locator('#voice')).toBeHidden();      // BD: not a ROM track
+  await page.goto('./?factory=0');                        // FACTORY SONG
+  await page.locator('#tracks button').nth(13).click();   // M2: ROM, HEY
+  await expect(page.locator('#lmach')).toHaveText('ROM:HEY');
+  await page.selectOption('#voice', 'JACK');
+  await expect(page.locator('#lmach')).toHaveText('ROM:JACK');
   await page.reload();
-  await page.click('#play');
-  await expect(page.locator('#mtrigs button.pos')).toHaveCount(1);
-  expect(await outPeak(page, 1500)).toBeGreaterThan(0.02);
-  await page.click('#stop');
-  await expect(page.locator('#mtrigs button.pos')).toHaveCount(0);
-  await page.locator('#mkeys button').nth(7).click(); // G at octave 2
-  await expect(page.locator('#mlnote')).toHaveText('G2');
-  await page.reload();
-  await expect(page.locator('#mlnote')).toHaveText('G2');
+  await page.locator('#tracks button').nth(13).click();
+  await expect(page.locator('#lmach')).toHaveText('ROM:JACK');
 });

@@ -31,24 +31,6 @@ export function numbox(el: HTMLElement, min: number, max: number, val: number, o
   return box;
 }
 
-// Rotary encoder: vertical drag, wheel, arrow keys (shift = x10), double-click = default
-export function encoder(el: HTMLElement, get: () => number, set: (v: number) => void, def: () => number) {
-  el.tabIndex = 0; el.setAttribute('role', 'slider');
-  el.onpointerdown = e => {
-    el.setPointerCapture(e.pointerId);
-    const y0 = e.clientY, v0 = get();
-    el.onpointermove = e => set(v0 + (y0 - e.clientY) / 2);
-  };
-  el.onpointerup = el.onpointercancel = () => { el.onpointermove = null; };
-  el.onwheel = e => { e.preventDefault(); set(get() - Math.sign(e.deltaY)); };
-  el.ondblclick = () => set(def());
-  el.onkeydown = e => {
-    const d = ({ ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 } as Record<string, number>)[e.key];
-    if (d) { e.preventDefault(); set(get() + d * (e.shiftKey ? 10 : 1)); }
-  };
-}
-export const drawEnc = (el: HTMLElement, v: number) => { el.style.setProperty('--a', (v / 127 * 270 - 135) + 'deg'); el.setAttribute('aria-valuenow', String(v)); };
-
 // Replace range inputs with rotary knobs (the hidden input keeps the value, so other code reads it as before).
 // Must run after every machine has been mounted
 export function knobify() {
