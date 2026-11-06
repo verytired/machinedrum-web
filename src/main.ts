@@ -354,7 +354,7 @@ function rowHtml(r: Row, i: number) {
     + `<td><button class="ins" title="duplicate this row below">+</button><button class="del" title="delete this row">−</button></td></tr>`;
 }
 function renderSong() {
-  songEl.innerHTML = `<table>${st.song.map(rowHtml).join('')}</table><button class="key" id="addrow">+ ROW</button>`;
+  songEl.innerHTML = `<table>${st.song.map(rowHtml).join('')}</table><button class="key" id="addrow">+ ROW</button><button class="key" id="clrsong">CLEAR SONG</button>`;
   songEl.querySelectorAll<HTMLSelectElement>('select').forEach((el, i) => { const r = st.song[i]; el.value = isPat(r) ? String(r.pat) : 'loop' in r ? 'loop' : 'end'; });
   draw();
 }
@@ -375,6 +375,7 @@ songEl.onclick = e => {
   const b = (e.target as HTMLElement).closest('button');
   if (!b) return;
   if (b.id === 'addrow') { if (st.song.length < 256) st.song.push(newRow()); }
+  else if (b.id === 'clrsong') { if (!st.song.length || !confirm('Delete all song rows?')) return; $('stop').click(); st.song = []; songRow = 0; }
   else {
     const i = +b.closest('tr')!.dataset.r!, r = st.song[i];
     if (b.classList.contains('go')) { if (playing && songMode) cue = i; else songRow = i; }

@@ -203,3 +203,18 @@ test('DEMO as .syx: EXP SYX during the demo, IMPORT it, SONG + PLAY plays it', a
   await page.click('#play');
   expect(await outPeak(page, 1500)).toBeGreaterThan(0.1);
 });
+
+test('CLEAR SONG deletes every song row (after a confirm)', async ({ page }) => {
+  await page.click('#songkey');
+  await page.click('#addrow'); await page.click('#addrow');
+  await expect(page.locator('#song tr')).toHaveCount(2);
+  page.once('dialog', d => d.dismiss());
+  await page.click('#clrsong');
+  await expect(page.locator('#song tr')).toHaveCount(2);
+  page.once('dialog', d => d.accept());
+  await page.click('#clrsong');
+  await expect(page.locator('#song tr')).toHaveCount(0);
+  await page.reload();
+  await page.click('#songkey');
+  await expect(page.locator('#song tr')).toHaveCount(0);
+});
