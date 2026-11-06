@@ -36,11 +36,12 @@ function valid(s: State | undefined): s is State {
 // (press SONG, then PLAY)
 const fq = new URLSearchParams(location.search).get('factory');
 if (fq !== null) history.replaceState(null, '', location.pathname);
-const song0 = FACTORY[Math.max(0, Math.min(FACTORY.length - 1, parseInt(fq ?? '') || 0))]();
+const song0 = FACTORY[Math.max(0, Math.min(FACTORY.length - 1, parseInt(fq ?? '') || 0))]?.(); // none in a build without src/factory/
 let fresh = false;
 function load(): State {
   if (fq === null) try { const s = JSON.parse(localStorage.getItem(KEY) ?? ''); if (valid(s)) return s; } catch { /* first run */ }
   fresh = true;
+  if (!song0) return defaultState();
   const s = songState(song0);
   if (s.mnm) mnm.load(s.mnm.kit, s.mnm.pats); else mnm.clear(); // the MNM gets the song's part, or rests
   delete s.mnm;
@@ -199,7 +200,7 @@ const idb = <T,>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest<
 }));
 // what was saved last time: names show right away, audio is decoded once the AudioContext exists
 // factory content: its ROM tracks get the song's voices, the other tracks' samples are dropped
-const voices: Record<string, string> = song0.voices;
+const voices: Record<string, string> = song0?.voices ?? {};
 const restored = Promise.all(TRACKS.map((n, tr) => !fresh ? idb<Saved | undefined>('readonly', s => s.get(tr)).catch(() => undefined)
   : (voices[n] ? idb('readwrite', o => o.put({ name: voices[n], voice: voices[n] }, tr)) : idb('readwrite', o => o.delete(tr))).catch(() => {}).then(() => voices[n] ? { name: voices[n], voice: voices[n] } : undefined)))
   .then(all => { all.forEach((s, tr) => { if (s) { smpName[tr] = s.name; saved[tr] = s; } }); draw(); return all; });

@@ -103,7 +103,7 @@ describe('p-locks', () => {
   });
 });
 
-describe('factory songs', () => {
+describe.skipIf(!FACTORY.length)('factory songs (src/factory/, local only)', () => {
   FACTORY.forEach(f => it(`${f().name}: renders the whole song at a sane level, fits 128 patterns and the .syx lock rows`, () => {
     const d = f(), st = defaultState(), step = Math.round(SR * 60 / d.tempo / 4), hits: Hit[] = [];
     st.kit = d.kit;

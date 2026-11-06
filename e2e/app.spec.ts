@@ -1,5 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
+import { existsSync } from 'fs';
 import { defaultState } from '../src/machines';
+// factory songs are local only (src/factory/ is not in the public repo); their tests skip without them
+const ftest = existsSync('src/factory/index.ts') ? test : test.skip;
 
 let errors: string[] = [];
 test.beforeEach(async ({ page }) => {
@@ -170,7 +173,7 @@ test('a save from before patterns / songs still loads as A01', async ({ page }) 
   await expect(page.locator('#trigs button').nth(1)).toHaveClass(/on/);
 });
 
-test('first run = the factory song (the demo): SONG + PLAY plays it; it survives EXP SYX + IMPORT; ?factory brings it back', async ({ page }) => {
+ftest('first run = the factory song (the demo): SONG + PLAY plays it; it survives EXP SYX + IMPORT; ?factory brings it back', async ({ page }) => {
   await page.evaluate(() => { localStorage.clear(); indexedDB.deleteDatabase('md-web'); });
   await page.reload();
   await expect(page.locator('#tempo')).toContainText('133');
@@ -225,15 +228,15 @@ test('CLEAR SONG deletes every song row (after a confirm)', async ({ page }) => 
 });
 
 test('RESET FX puts the echo and gate box back to their defaults', async ({ page }) => {
-  await page.evaluate(() => localStorage.clear());
-  await page.reload();                                    // factory content: the demo's effect settings
+  await page.evaluate(s => { const x = JSON.parse(s); x.fx = { echo: [1, 2, 3, 4, 0, 0, 0, 5], gate: [6, 7, 8, 9, 10, 0, 0, 11] }; localStorage.setItem('md-web-v1', JSON.stringify(x)); }, blank);
+  await page.reload();
   await page.click('#fxreset');
   await expect(page.locator('#lstat')).toHaveText('FX RESET');
   const fx = await page.evaluate(() => JSON.parse(localStorage.getItem('md-web-v1')!).fx);
   expect(fx).toEqual({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100] });
 });
 
-test('?factory=N resets to factory song N; SONG + PLAY plays it', async ({ page }) => {
+ftest('?factory=N resets to factory song N; SONG + PLAY plays it', async ({ page }) => {
   await page.goto('./?factory=1');                        // FACTORY SONG
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('#tempo')).toContainText('134');
@@ -246,21 +249,21 @@ test('?factory=N resets to factory song N; SONG + PLAY plays it', async ({ page 
 });
 
 test('EXP WAV renders the song to a 16-bit stereo WAV', async ({ page }) => {
-  await page.goto('./?factory=5');                        // FACTORY SONG
-  await expect(page.locator('#tempo')).toContainText('133');
+  await page.click('#songkey');
+  await page.click('#addrow');                            // one row: the default pattern, once
   const dl = page.waitForEvent('download', { timeout: 120000 });
   await page.click('#wav');
   const b = (await import('fs')).readFileSync(await (await dl).path());
   expect(b.toString('ascii', 0, 4) + b.toString('ascii', 8, 12)).toBe('RIFFWAVE');
   expect([b.readUInt16LE(22), b.readUInt32LE(24), b.readUInt16LE(34)]).toEqual([2, 44100, 16]);
   const secs = b.readUInt32LE(40) / 4 / 44100;
-  expect(secs).toBeGreaterThan(5.2 * 60);                 // the whole song (~5:17) plus a tail
-  let pk = 0; for (let i = 44 + 44100 * 4 * 60; i < 44 + 44100 * 4 * 61; i += 2) pk = Math.max(pk, Math.abs(b.readInt16LE(i)));
-  expect(pk).toBeGreaterThan(3000);                       // a minute in, it plays
+  expect(secs).toBeCloseTo(16 * 60 / 125 / 4 + 3, 1);     // one bar at 125 BPM plus a 3 s tail
+  let pk = 0; for (let i = 44; i < 44 + 44100 * 4; i += 2) pk = Math.max(pk, Math.abs(b.readInt16LE(i)));
+  expect(pk).toBeGreaterThan(3000);
   await expect(page.locator('#lstat')).toHaveText('WAV EXPORTED');
 });
 
-test('VOICE menu puts a built-in voice on a ROM track (hidden on other machines)', async ({ page }) => {
+ftest('VOICE menu puts a built-in voice on a ROM track (hidden on other machines)', async ({ page }) => {
   await expect(page.locator('#voice')).toBeHidden();      // BD: not a ROM track
   await page.goto('./?factory=0');                        // FACTORY SONG
   await page.locator('#tracks button').nth(13).click();   // M2: ROM, HEY
