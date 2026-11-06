@@ -3,7 +3,7 @@ import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, defaultState, stepParams, type State } from './machines';
 import { demoSong, applyBar, BARS as demoBars, type Bar } from './demo';
 import { voice, VOICES } from './voice';
-import { kitSyx, patternSyx, readSyx } from './syx';
+import { kitSyx, patternSyx, parseSyx, applyKit, applyPattern, patName, patKit, kitName, isEmpty, wav, type Dump } from './syx';
 import type { HitMsg, SmpMsg } from './dsp/md-processor';
 import procUrl from './dsp/md-processor.ts?worker&url';
 import wasmUrl from './dsp/md.wasm?url';
@@ -217,15 +217,36 @@ $('syx').onclick = () => {
     flash('SYX EXPORTED');
   } catch (e) { flash('SYX FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
 };
-const importer = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json,.syx' });
+// imported .syx files (kits, patterns, SDS samples) stay here; the PAT menu picks a pattern, its kit comes with it
+let dump: Dump = { kits: [], pats: [], samples: [] };
+const patSel = $('pat') as HTMLSelectElement;
+async function usePattern(i: number) {
+  const p = dump.pats[i], k = p ? dump.kits.find(k => k[9] === patKit(p)) ?? dump.kits[0] : dump.kits[0];
+  const s = structuredClone(st);
+  if (p) applyPattern(p, s);
+  const slots = k ? applyKit(k, s) : [];
+  Object.assign(st, s); save(); applyFx();
+  await ensureAudio();
+  for (const [tr, slot] of slots.entries()) {
+    const x = dump.samples.find(x => x.slot === slot);
+    if (x) await setSample(tr, { name: 'ROM-' + String(slot + 1).padStart(2, '0'), file: wav(x) }).catch(() => {});
+  }
+  flash((p ? patName(p) + ' ' : '') + (k ? kitName(k) : ''));
+}
+patSel.onchange = () => usePattern(+patSel.value);
+const importer = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json,.syx', multiple: true });
 importer.onchange = async () => {
-  const f = importer.files?.[0]; importer.value = '';
+  const files = [...importer.files ?? []]; importer.value = '';
+  const f = files[0];
   if (!f) return;
   try {
-    const bytes = new Uint8Array(await f.arrayBuffer());
-    if (bytes[0] === 0xf0) {
-      const s = structuredClone(st), got = readSyx(bytes, s);
-      $('stop').click(); Object.assign(st, s); save(); applyFx(); flash('IMPORTED ' + got.join('+')); return;
+    const bufs = await Promise.all(files.map(async f => new Uint8Array(await f.arrayBuffer())));
+    if (bufs.every(b => b[0] === 0xf0)) {   // .syx: kits / patterns replace the previous ones, samples add up
+      const ds = bufs.map(parseSyx), kits = ds.flatMap(d => d.kits), pats = ds.flatMap(d => d.pats).filter(p => !isEmpty(p));
+      dump = { kits: kits.length ? kits : dump.kits, pats: pats.length || kits.length ? pats : dump.pats, samples: [...ds.flatMap(d => d.samples), ...dump.samples] };
+      patSel.replaceChildren(...dump.pats.map((p, i) => new Option(patName(p) + ' ' + kitName(dump.kits.find(k => k[9] === patKit(p)) ?? dump.kits[0] ?? new Uint8Array(26)), String(i))));
+      patSel.hidden = dump.pats.length < 2;
+      await usePattern(0); return;
     }
     const b = JSON.parse(await f.text()) as Bundle;
     if (b?.app !== 'machinedrum-web' || !valid(b.st) || !Array.isArray(b.samples)) throw new Error('not a machinedrum-web file');

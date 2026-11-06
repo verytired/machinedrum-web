@@ -9,7 +9,6 @@ const KIT = 0x52, PAT = 0x67, KIT_LEN = 1233, PAT_LEN = 2763;
 // our machine index -> MD machine ID (ROM -> ROM-01)
 const MD_ID = [1, 2, 3, 16, 17, 22, 23, 19, 32, 33, 37, 38, 128];
 const ROM = MD_ID.length - 1;
-const ours = (id: number) => { const i = MD_ID.indexOf(id); return i >= 0 ? i : (id >= 128 && id < 160) || (id >= 176 && id < 192) ? ROM : -1; };
 
 // 7 bytes per group, led by a byte holding their top bits (bit 6-k = byte k)
 export function enc7(raw: ArrayLike<number>): number[] {
@@ -68,42 +67,84 @@ export function patternSyx(st: State): Uint8Array<ArrayBuffer> {
   return wrap(PAT, 3, 1, b, PAT_LEN);
 }
 
-// Read every kit / pattern message in a .syx into st; returns what was read. 32- and 64-step patterns: first 16 steps.
-export function readSyx(bytes: Uint8Array, st: State): string[] {
-  const got: string[] = [];
+// ---- reading ----
+// MD machines we don't have -> the nearest one we do (machine params keep the MD's values, so it is an approximation)
+const NEAR: Record<number, number> = {
+  18: 3, 20: 10, 21: 10, 24: 6, 25: 1, 26: 7, 27: 3, 28: 3,                  // TRX-XT RS CB CY MA CL XC B2
+  34: 8, 35: 7, 36: 10, 39: 11,                                              // EFM-XT CP RS CY
+  48: 3, 49: 4, 50: 8, 51: 8, 52: 7, 53: 10, 54: 10, 55: 5, 56: 6, 57: 6, 58: 6, // E12
+  64: 3, 65: 4, 72: 5,                                                       // P-I BD SD HH
+};
+const romSlot = (id: number) => id >= 128 && id < 160 ? id - 128 : id >= 176 && id < 192 ? id - 144 : -1;
+
+export interface Sample { slot: number; rate: number; d: Float32Array }
+export interface Dump { kits: Uint8Array[]; pats: Uint8Array[]; samples: Sample[] }
+
+// Split a .syx into MD kit / pattern dumps (checksummed) and Sample Dump Standard samples (16-bit)
+export function parseSyx(bytes: Uint8Array): Dump {
+  const out: Dump = { kits: [], pats: [], samples: [] };
+  let smp: { s: Sample; n: number } | undefined;
   for (let i = bytes.indexOf(0xf0); i >= 0; i = bytes.indexOf(0xf0, i + 1)) {
     const end = bytes.indexOf(0xf7, i); if (end < 0) break;
     const d = bytes.subarray(i, end + 1);
-    if (d.length < 15 || HDR.some((h, k) => d[k] !== h) || (d[6] !== KIT && d[6] !== PAT)) continue;
-    const sum = d.subarray(9, d.length - 5).reduce((s, b) => s + b, 0) & 0x3fff;
-    if (sum !== (d[d.length - 5] << 7 | d[d.length - 4])) throw new Error('bad checksum');
-    if (d[6] === KIT) {
-      if (d.length !== KIT_LEN) throw new Error('bad kit length');
-      const models = dec7(d, 0x1aa, 64);
-      for (let tr = 0; tr < 16; tr++) {
-        const m = ours(rd32(models, tr * 4) & 0xffff);
-        const p = Array.from(d.subarray(0x1a + tr * 24, 0x1a + tr * 24 + 24));
-        st.kit[tr] = m < 0 ? { ...trackFor(ROM), p: [...trackFor(ROM).p.slice(0, 8), ...p.slice(8)] } : { m, p };  // unknown machine: empty ROM, keep the FX
-      }
-      const r = d.subarray(0x487), e = d.subarray(0x48f);
-      st.fx = { echo: [e[0], e[3], e[4], e[5], 0, 0, 0, e[7]], gate: [st.fx.gate[0], st.fx.gate[1], r[2], r[4], r[5], 0, 0, r[7]] };
-      got.push('KIT');
-    } else {
-      if (d.length < PAT_LEN) throw new Error('bad pattern length');
-      const trig = dec7(d, 0x0a, 64), mask = dec7(d, 0x54, 64), mat = dec7(d, 0xb7, 2048);
-      let row = 0;
-      for (let tr = 0; tr < 16; tr++) {
-        const tm = rd32(trig, tr * 4), lm = rd32(mask, tr * 4);
-        st.trig[tr] = Array.from({ length: 16 }, (_, s) => !!(tm >>> s & 1));
-        st.lock[tr] = Array(16).fill(null);
-        for (let p = 0; p < 24; p++) if (lm >>> p & 1 && row < 64) {
-          for (let s = 0; s < 16; s++) { const v = mat[row * 32 + s]; if (v <= 127) st.lock[tr][s] = { ...st.lock[tr][s], [p]: v }; }
-          row++;
-        }
-      }
-      got.push('PATTERN');
+    if (d[1] === 0x7e && d[3] === 0x01 && d.length >= 21) {                   // SDS header
+      const len = d[10] | d[11] << 7 | d[12] << 14, per = d[7] | d[8] << 7 | d[9] << 14;
+      smp = d[6] === 16 && len > 0 && len <= 1 << 22 && per > 0 ? { s: { slot: d[4] | d[5] << 7, rate: Math.round(1e9 / per), d: new Float32Array(len) }, n: 0 } : undefined;
+      if (smp) out.samples.push(smp.s);
+    } else if (d[1] === 0x7e && d[3] === 0x02 && smp && d.length === 127) {     // SDS data: 40 words, 3 bytes each, left-justified, offset binary
+      for (let k = 5; k + 2 < 125 && smp.n < smp.s.d.length; k += 3) smp.s.d[smp.n++] = ((d[k] << 9 | d[k + 1] << 2 | d[k + 2] >> 5) - 0x8000) / 0x8000;
+    } else if (d.length >= 15 && HDR.every((h, k) => d[k] === h) && (d[6] === KIT || d[6] === PAT)) {
+      const sum = d.subarray(9, d.length - 5).reduce((s, b) => s + b, 0) & 0x3fff;
+      if (sum !== (d[d.length - 5] << 7 | d[d.length - 4])) throw new Error('bad checksum');
+      if (d[6] === KIT && d.length !== KIT_LEN) throw new Error('bad kit length');
+      if (d[6] === PAT && d.length < PAT_LEN) throw new Error('bad pattern length');
+      (d[6] === KIT ? out.kits : out.pats).push(d);
     }
   }
-  if (!got.length) throw new Error('no MD kit or pattern');
-  return got;
+  if (!out.kits.length && !out.pats.length && !out.samples.length) throw new Error('no MD kit, pattern or sample');
+  return out;
+}
+
+export const patName = (p: Uint8Array) => 'ABCDEFGH'[p[9] >> 4] + String((p[9] & 15) + 1).padStart(2, '0');
+export const kitName = (k: Uint8Array) => String.fromCharCode(...k.subarray(10, 26)).replace(/[\0\x7f][\s\S]*/, '');
+export const patKit = (p: Uint8Array) => p[0xb5];
+export const isEmpty = (p: Uint8Array) => dec7(p, 0x0a, 64).every(b => b === 0);
+
+// Put a kit dump into st; returns the ROM slot used by each track (-1 = none)
+export function applyKit(d: Uint8Array, st: State): number[] {
+  const models = dec7(d, 0x1aa, 64), slots: number[] = [];
+  for (let tr = 0; tr < 16; tr++) {
+    const id = rd32(models, tr * 4) & 0xffff, p = Array.from(d.subarray(0x1a + tr * 24, 0x1a + tr * 24 + 24));
+    const m = MD_ID.indexOf(id) >= 0 ? MD_ID.indexOf(id) : romSlot(id) >= 0 ? ROM : NEAR[id] ?? -1;
+    st.kit[tr] = m < 0 ? { ...trackFor(ROM), p: [...trackFor(ROM).p.slice(0, 8), ...p.slice(8)] } : { m, p }; // unknown: empty ROM, keep the FX
+    slots.push(romSlot(id));
+  }
+  const r = d.subarray(0x487), e = d.subarray(0x48f);
+  st.fx = { echo: [e[0], e[3], e[4], e[5], 0, 0, 0, e[7]], gate: [st.fx.gate[0], st.fx.gate[1], r[2], r[4], r[5], 0, 0, r[7]] };
+  return slots;
+}
+
+// Put a pattern dump into st (first 16 steps of a 32 / 64-step pattern); lock rows follow the lock masks in order
+export function applyPattern(d: Uint8Array, st: State) {
+  const trig = dec7(d, 0x0a, 64), mask = dec7(d, 0x54, 64), mat = dec7(d, 0xb7, 2048);
+  let row = 0;
+  for (let tr = 0; tr < 16; tr++) {
+    const tm = rd32(trig, tr * 4), lm = rd32(mask, tr * 4);
+    st.trig[tr] = Array.from({ length: 16 }, (_, s) => !!(tm >>> s & 1));
+    st.lock[tr] = Array(16).fill(null);
+    for (let p = 0; p < 24; p++) if (lm >>> p & 1 && row < 64) {
+      for (let s = 0; s < 16; s++) { const v = mat[row * 32 + s]; if (v <= 127) st.lock[tr][s] = { ...st.lock[tr][s], [p]: v }; }
+      row++;
+    }
+  }
+}
+
+// mono 16-bit WAV, so a sample goes through the same decode / IndexedDB path as a loaded file
+export function wav(s: Sample): ArrayBuffer {
+  const n = s.d.length, v = new DataView(new ArrayBuffer(44 + n * 2));
+  const str = (o: number, t: string) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, s.rate, true); v.setUint32(28, s.rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 2, true);
+  s.d.forEach((x, i) => v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, x)) * 32767, true));
+  return v.buffer;
 }

@@ -35,7 +35,8 @@
       <button class="key" id="demo">DEMO</button>
       <button class="key" id="export" title="save pattern, kit, tempo, effects and samples to a JSON file">EXPORT</button>
       <button class="key" id="syx" title="save kit + pattern as Machinedrum SysEx (.syx)">EXP SYX</button>
-      <button class="key" id="import" title="load a file saved with EXPORT, or a Machinedrum .syx (kit / pattern)">IMPORT</button>
+      <select class="key" id="pat" hidden title="pattern from the imported .syx (its kit comes with it)"></select>
+      <button class="key" id="import" title="load a file saved with EXPORT, or Machinedrum .syx files (kits, patterns, SDS samples; pick several at once)">IMPORT</button>
       <button class="key" id="load" title="load a WAV into this track (or drop one on a track key)">LOAD SMP</button>
       <button class="key" id="clear">CLEAR TRK</button>
       <button class="key play" id="play" aria-label="play"><i></i>▶</button>

@@ -117,3 +117,18 @@ test('IMPORT rejects a file that is not ours', async ({ page }) => {
   await (await ic).setFiles({ name: 'x.json', mimeType: 'application/json', buffer: Buffer.from('{"kit":[]}') });
   await expect(page.locator('#lstat')).toContainText('IMPORT FAILED');
 });
+
+test('EXP SYX then IMPORT of the .syx brings back the pattern', async ({ page }) => {
+  await page.locator('#trigs button').nth(3).click();
+  const on = await page.locator('#trigs button').nth(3).getAttribute('class');
+  const dl = page.waitForEvent('download');
+  await page.click('#syx');
+  const file = await (await dl).path();
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  const ic = page.waitForEvent('filechooser');
+  await page.click('#import');
+  await (await ic).setFiles({ name: 'k.syx', mimeType: 'application/octet-stream', buffer: (await import('fs')).readFileSync(file) });
+  await expect(page.locator('#lstat')).toHaveText(/A01 MD-WEB/);
+  expect(await page.locator('#trigs button').nth(3).getAttribute('class')).toBe(on);
+});
