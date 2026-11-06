@@ -15,7 +15,7 @@ npm run check   # typecheck + unit tests + build + Playwright
 - Master effects: Rhythm Echo (tempo-synced delay) and Gate Box (gated reverb)
 - Click a track name to select it; click a trig key to toggle a step; hold a trig and turn an encoder for a parameter lock
 - DEMO plays a built-in song
-- The pattern and kit are saved to localStorage automatically
+- The pattern and kit are saved to localStorage automatically; EXPORT / IMPORT writes and reads everything (samples included) as one JSON file
 
 ## Disclaimer
 

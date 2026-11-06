@@ -2,20 +2,28 @@ import { $, numbox } from './dom';
 import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, defaultState, stepParams, type State } from './machines';
 import { demoSong, applyBar, BARS as demoBars, type Bar } from './demo';
-import { voice } from './voice';
+import { voice, VOICES } from './voice';
 import type { HitMsg, SmpMsg } from './dsp/md-processor';
 import procUrl from './dsp/md-processor.ts?worker&url';
 import wasmUrl from './dsp/md.wasm?url';
 
 // ---- state (one pattern + kit, autosaved) ----
 const KEY = 'md-web-v1';
+// shape check for anything read back (localStorage, an imported file); fills fx for old saves
+function valid(s: State | undefined): s is State {
+  const ok = s?.kit?.length === 16 && s.kit.every(t => Number.isInteger(t?.m) && MACHINES[t.m] && t.p?.length === 24 && t.p.every(Number.isFinite))
+    && s.trig?.length === 16 && s.trig.every(r => r?.length === 16) && s.lock?.length === 16 && s.lock.every(r => r?.length === 16 && r.every(l => l == null || Object.values(l).every(Number.isFinite)))
+    && Number.isFinite(s.tempo);
+  if (ok) s.fx ??= defaultFx();
+  return ok;
+}
 function load(): State {
-  try { const s = JSON.parse(localStorage.getItem(KEY) ?? ''); if (s?.kit?.length === 16) { s.fx ??= defaultFx(); return s; } } catch { /* first run */ }
+  try { const s = JSON.parse(localStorage.getItem(KEY) ?? ''); if (valid(s)) return s; } catch { /* first run */ }
   return defaultState();
 }
 const st = load();
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch { /* private mode */ } };
-let cur = 0, page = 0, held = -1, heldEdited = false, latched = false, skipUp = false, pos = -1, songPos = 0, level = 100;
+let msg = '', cur = 0, page = 0, held = -1, heldEdited = false, latched = false, skipUp = false, pos = -1, songPos = 0, level = 100;
 
 // ---- audio ----
 let fx: ReturnType<typeof masterFx> | undefined;
@@ -151,6 +159,7 @@ $('clear').onclick = () => { st.trig[cur].fill(false); st.lock[cur].fill(null); 
 // start, so a different sample rate next time still plays at the right pitch.
 type Saved = { name: string; file?: ArrayBuffer; voice?: string };
 const smpName: string[] = Array(16).fill('');
+const saved: (Saved | undefined)[] = Array(16); // what EXPORT writes out
 const db = new Promise<IDBDatabase>((res, rej) => {
   const r = indexedDB.open('md-web', 1);
   r.onupgradeneeded = () => r.result.createObjectStore('smp');
@@ -161,10 +170,10 @@ const idb = <T,>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest<
 }));
 // what was saved last time: names show right away, audio is decoded once the AudioContext exists
 const restored = Promise.all(TRACKS.map((_, tr) => idb<Saved | undefined>('readonly', s => s.get(tr)).catch(() => undefined)))
-  .then(all => { all.forEach((s, tr) => { if (s) smpName[tr] = s.name; }); draw(); return all; });
+  .then(all => { all.forEach((s, tr) => { if (s) { smpName[tr] = s.name; saved[tr] = s; } }); draw(); return all; });
 
 async function setSample(tr: number, s: Saved, persist = true) {
-  smpName[tr] = s.name;
+  smpName[tr] = s.name; saved[tr] = s;
   if (persist) idb('readwrite', st => st.put(s, tr)).catch(() => { /* private mode: this session only */ });
   let d: Float32Array;
   if (s.voice) d = voice(s.voice, ctx!.sampleRate);
@@ -186,6 +195,40 @@ const ROM = MACHINES.findIndex(m => m.name === 'ROM');
 const picker = Object.assign(document.createElement('input'), { type: 'file', accept: 'audio/*' });
 picker.onchange = () => { if (picker.files?.[0]) loadSample(cur, picker.files[0]); picker.value = ''; };
 $('load').onclick = () => picker.click();
+
+// ---- EXPORT / IMPORT: the whole state plus the ROM samples in one JSON file ----
+type Bundle = { app: 'machinedrum-web'; v: 1; st: State; samples: { tr: number; name: string; voice?: string; file?: string }[] };
+const b64 = (buf: ArrayBuffer) => new Promise<string>(res => { const r = new FileReader(); r.onload = () => res((r.result as string).split(',')[1]); r.readAsDataURL(new Blob([buf])); });
+const flash = (m: string) => { msg = m; draw(); setTimeout(() => { msg = ''; draw(); }, 2500); };
+$('export').onclick = async () => {
+  await restored;
+  const samples = await Promise.all(saved.map(async (s, tr) => s && { tr, name: s.name, voice: s.voice, file: s.file && await b64(s.file) }));
+  const b: Bundle = { app: 'machinedrum-web', v: 1, st, samples: samples.filter(x => !!x) };
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([JSON.stringify(b)], { type: 'application/json' })), download: `machinedrum-${new Date().toISOString().slice(0, 10)}.json` });
+  a.click(); URL.revokeObjectURL(a.href);
+  flash('EXPORTED');
+};
+const importer = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json' });
+importer.onchange = async () => {
+  const f = importer.files?.[0]; importer.value = '';
+  if (!f) return;
+  try {
+    const b = JSON.parse(await f.text()) as Bundle;
+    if (b?.app !== 'machinedrum-web' || !valid(b.st) || !Array.isArray(b.samples)) throw new Error('not a machinedrum-web file');
+    $('stop').click();
+    Object.assign(st, b.st); save(); tempo.set(st.tempo); applyFx();
+    await ensureAudio();
+    for (let tr = 0; tr < 16; tr++) { smpName[tr] = ''; saved[tr] = undefined; idb('readwrite', s => s.delete(tr)).catch(() => {}); node!.port.postMessage({ k: 'smp', tr, d: new Float32Array(0) } satisfies SmpMsg); }
+    for (const x of b.samples) {
+      if (!Number.isInteger(x?.tr) || x.tr < 0 || x.tr > 15 || typeof x.name !== 'string') continue;
+      const file = typeof x.file === 'string' ? await (await fetch('data:application/octet-stream;base64,' + x.file)).arrayBuffer() : undefined;
+      const voiceName = typeof x.voice === 'string' && VOICES.includes(x.voice) ? x.voice : undefined;
+      if (file || voiceName) await setSample(x.tr, { name: x.name.slice(0, 12), file, voice: voiceName }).catch(() => {});
+    }
+    flash('IMPORTED');
+  } catch (e) { flash('IMPORT FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
+};
+$('import').onclick = () => importer.click();
 
 // ---- track keys + trig keys ----
 const trackBtns = TRACKS.map((name, i) => {
@@ -231,7 +274,7 @@ function draw() {
   $('lengine').textContent = engine;
   $('lgrid').innerHTML = labs.map((lab, k) =>
     `<span class="${!lab ? 'off' : lockOf(k) !== undefined ? 'lk' : ''}"><i>${lab || '----'}</i><b>${lab ? pad(val(k)) : ''}</b></span>`).join('');
-  $('lstat').textContent = held >= 0 ? `LOCK STEP ${held + 1} - TURN AN ENCODER${latched ? ' / CLICK A TRIG TO RELEASE' : ''}` : songPos ? `DEMO  BAR ${songPos}/${demoBars}` : PAGES[page];
+  $('lstat').textContent = msg ? msg : held >= 0 ? `LOCK STEP ${held + 1} - TURN AN ENCODER${latched ? ' / CLICK A TRIG TO RELEASE' : ''}` : songPos ? `DEMO  BAR ${songPos}/${demoBars}` : PAGES[page];
   encs.forEach((lab, k) => {
     lab.classList.toggle('off', !labs[k]);
     lab.querySelector('b')!.textContent = labs[k] || '-';

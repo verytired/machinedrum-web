@@ -82,3 +82,38 @@ test('LOAD SMP puts a WAV on the track as a ROM machine, it plays and survives a
   await page.locator('#tracks button').nth(13).click();
   expect(await pk2).toBeGreaterThan(0.05);
 });
+
+test('EXPORT then IMPORT brings back the pattern and samples', async ({ page }) => {
+  await page.locator('#tracks button').nth(13).click();
+  const chooser = page.waitForEvent('filechooser');
+  await page.click('#load');
+  await (await chooser).setFiles({ name: 'tone.wav', mimeType: 'audio/wav', buffer: wav() });
+  await expect(page.locator('#lmach')).toHaveText('ROM:TONE');
+  await page.locator('#trigs button').nth(5).click();
+  const on = await page.locator('#trigs button').nth(5).getAttribute('class');
+  const dl = page.waitForEvent('download');
+  await page.click('#export');
+  const file = await (await dl).path();
+  // wipe everything, then import
+  await page.evaluate(() => { localStorage.clear(); indexedDB.deleteDatabase('md-web'); });
+  await page.reload();
+  await page.locator('#tracks button').nth(13).click();
+  await expect(page.locator('#lmach')).not.toHaveText('ROM:TONE');
+  const ic = page.waitForEvent('filechooser');
+  await page.click('#import');
+  await (await ic).setFiles(file);
+  await expect(page.locator('#lstat')).toHaveText('IMPORTED');
+  await page.locator('#tracks button').nth(13).click();
+  await expect(page.locator('#lmach')).toHaveText('ROM:TONE');
+  expect(await page.locator('#trigs button').nth(5).getAttribute('class')).toBe(on);
+  const pk = outPeak(page, 400);
+  await page.locator('#tracks button').nth(13).click();
+  expect(await pk).toBeGreaterThan(0.05);
+});
+
+test('IMPORT rejects a file that is not ours', async ({ page }) => {
+  const ic = page.waitForEvent('filechooser');
+  await page.click('#import');
+  await (await ic).setFiles({ name: 'x.json', mimeType: 'application/json', buffer: Buffer.from('{"kit":[]}') });
+  await expect(page.locator('#lstat')).toContainText('IMPORT FAILED');
+});
