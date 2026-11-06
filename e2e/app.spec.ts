@@ -64,7 +64,7 @@ function wav(): Buffer {
   return b;
 }
 
-test('LOAD SMP puts a WAV on the track as a ROM machine and it plays', async ({ page }) => {
+test('LOAD SMP puts a WAV on the track as a ROM machine, it plays and survives a reload', async ({ page }) => {
   await page.locator('#tracks button').nth(13).click(); // M2
   const chooser = page.waitForEvent('filechooser');
   await page.click('#load');
@@ -73,4 +73,12 @@ test('LOAD SMP puts a WAV on the track as a ROM machine and it plays', async ({ 
   const pk = outPeak(page, 400);
   await page.locator('#tracks button').nth(13).click();
   expect(await pk).toBeGreaterThan(0.05);
+  // the sample survives a reload (IndexedDB)
+  await page.reload();
+  await page.locator('#tracks button').nth(13).click();
+  await expect(page.locator('#lmach')).toHaveText('ROM:TONE');
+  await page.waitForTimeout(300); // decode of the restored sample
+  const pk2 = outPeak(page, 400);
+  await page.locator('#tracks button').nth(13).click();
+  expect(await pk2).toBeGreaterThan(0.05);
 });

@@ -10,7 +10,7 @@ npm run dev     # http://localhost:5173
 npm run check   # typecheck + unit tests + build + Playwright
 ```
 
-- Machines: GND-SN/NS/IM, TRX-BD/SD/CH/OH/CP, EFM-BD/SD/CB/HH (synthesized), plus ROM: load a WAV with LOAD SMP or drop one on a track key (PTCH / DEC / STRT / END, END < STRT plays it reversed; samples are not saved across reloads)
+- Machines: GND-SN/NS/IM, TRX-BD/SD/CH/OH/CP, EFM-BD/SD/CB/HH (synthesized), plus ROM: load a WAV with LOAD SMP or drop one on a track key (PTCH / DEC / STRT / END, END < STRT plays it reversed; samples are kept in IndexedDB)
 - Track chain: AMD/AMF → EQF/EQG → FLTF/FLTW/FLTQ → SRR → DIST → VOL/PAN → DEL/REV sends
 - Master effects: Rhythm Echo (tempo-synced delay) and Gate Box (gated reverb)
 - Click a track name to select it; click a trig key to toggle a step; hold a trig and turn an encoder for a parameter lock

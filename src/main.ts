@@ -37,6 +37,7 @@ async function ensureAudio() {
     fx = masterFx(ctx, out);
     node.connect(fx.echoIn, 1); node.connect(fx.gateIn, 2);
     applyFx();
+    (await restored).forEach((s, tr) => { if (s) setSample(tr, s, false).catch(() => { /* unreadable: stays empty */ }); });
     Object.assign(window, { md: { ctx, out } }); // e2e hook
   })());
   await ctx!.resume();
@@ -77,10 +78,8 @@ $('demo').onclick = async () => {
   $('stop').click();
   const d = demoSong();
   await ensureAudio();
-  for (const [tr, w] of Object.entries(d.voices)) { // the demo's ROM tracks get the built-in voice samples
-    const i = TRACKS.indexOf(tr), v = voice(w, ctx!.sampleRate);
-    node!.port.postMessage({ k: 'smp', tr: i, d: v } satisfies SmpMsg, [v.buffer]); smpName[i] = w;
-  }
+  // the demo's ROM tracks get the built-in voice samples
+  await Promise.all(Object.entries(d.voices).map(([tr, w]) => setSample(TRACKS.indexOf(tr), { name: w, voice: w })));
   tempo.set(d.tempo); // saves; the demo kit/bars below are not saved unless you edit during the demo
   st.kit = d.kit; st.fx = d.fx; applyFx(); song = d.bars; songBar = 0; songPos = 0; swing = d.swing;
   $('play').click();
@@ -148,15 +147,37 @@ document.querySelectorAll<HTMLElement>('[data-page]').forEach(b => b.onclick = (
 $('clear').onclick = () => { st.trig[cur].fill(false); st.lock[cur].fill(null); save(); draw(); };
 
 // ---- ROM samples: LOAD (file picker) or drop an audio file on a track key ----
-// ponytail: samples live only in memory, a reload leaves ROM tracks silent; persist to IndexedDB if that bites
+// Saved per track in IndexedDB as the original file bytes (or the built-in voice's name) and decoded again on
+// start, so a different sample rate next time still plays at the right pitch.
+type Saved = { name: string; file?: ArrayBuffer; voice?: string };
 const smpName: string[] = Array(16).fill('');
+const db = new Promise<IDBDatabase>((res, rej) => {
+  const r = indexedDB.open('md-web', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('smp');
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+});
+const idb = <T,>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest<T>) => db.then(d => new Promise<T>((res, rej) => {
+  const q = f(d.transaction('smp', mode).objectStore('smp')); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+}));
+// what was saved last time: names show right away, audio is decoded once the AudioContext exists
+const restored = Promise.all(TRACKS.map((_, tr) => idb<Saved | undefined>('readonly', s => s.get(tr)).catch(() => undefined)))
+  .then(all => { all.forEach((s, tr) => { if (s) smpName[tr] = s.name; }); draw(); return all; });
+
+async function setSample(tr: number, s: Saved, persist = true) {
+  smpName[tr] = s.name;
+  if (persist) idb('readwrite', st => st.put(s, tr)).catch(() => { /* private mode: this session only */ });
+  let d: Float32Array;
+  if (s.voice) d = voice(s.voice, ctx!.sampleRate);
+  else {
+    const ab = await ctx!.decodeAudioData(s.file!.slice(0)); // resampled to the context rate; slice: decoding detaches its input
+    d = new Float32Array(ab.length);
+    for (let c = 0; c < ab.numberOfChannels; c++) ab.getChannelData(c).forEach((v, i) => d[i] += v / ab.numberOfChannels);
+  }
+  node!.port.postMessage({ k: 'smp', tr, d } satisfies SmpMsg, [d.buffer]);
+}
 async function loadSample(tr: number, f: File) {
   await ensureAudio();
-  const ab = await ctx!.decodeAudioData(await f.arrayBuffer()); // resampled to the context rate
-  const d = new Float32Array(ab.length);
-  for (let c = 0; c < ab.numberOfChannels; c++) ab.getChannelData(c).forEach((v, i) => d[i] += v / ab.numberOfChannels);
-  node!.port.postMessage({ k: 'smp', tr, d } satisfies SmpMsg, [d.buffer]);
-  smpName[tr] = f.name.replace(/\.[^.]+$/, '').toUpperCase().slice(0, 12);
+  await setSample(tr, { name: f.name.replace(/\.[^.]+$/, '').toUpperCase().slice(0, 12), file: await f.arrayBuffer() });
   cur = tr;
   if (st.kit[tr].m !== ROM) { st.kit[tr] = { m: ROM, p: MACHINES[ROM].defs.concat(st.kit[tr].p.slice(8)) }; st.lock[tr].forEach(l => { if (l) for (let i = 0; i < 8; i++) delete l[i]; }); save(); }
   draw(); hit(tr, ctx!.currentTime, stepParams(st, tr, -1));
