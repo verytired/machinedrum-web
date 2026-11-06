@@ -1,9 +1,9 @@
 // .syx round trip; the byte layout was checked once against waftlord/mddt's encoder (identical output)
 import { test, expect } from 'vitest';
 import { kitSyx, patternSyx, parseSyx, applyKit, readPattern, readSong, stateSyx, romSlots, wav, enc7, dec7 } from './syx';
-import { applyBar, songState, empty, hits, notes, FLTF, type Song } from './demo';
+import { applyBar, songState, empty, hits, notes, FLTF, type Song } from './bars';
 import { defaultState, trackFor } from './machines';
-import { FACTORY } from './songs';
+import { FACTORY } from './presets';
 import { voice } from './voice';
 import { enter, next, isPat } from './song';
 
