@@ -125,7 +125,7 @@ describe('voice samples', () => {
       const v = voice(w, SR, () => 0.5);
       expect(v.every(Number.isFinite)).toBe(true);
       expect(peak(v)).toBeCloseTo(0.8, 5);
-      expect(v.length).toBeGreaterThan(SR * 0.3);
+      expect(v.length).toBeGreaterThan(SR * 0.15);
     }
   });
 });

@@ -3,30 +3,34 @@
 // ponytail: three formants and linear glides, so it shouts like a robot; good enough chopped up in a demo
 type Key = [t: number, f1: number, f2: number, f3: number, voiced: number, noise: number];
 const WORDS: Record<string, { f0: [number, number]; k: Key[] }> = {
-  HEY: { f0: [190, 150], k: [[0, 530, 1840, 2480, 0, 0], [0.01, 530, 1840, 2480, 0, 0.7], [0.06, 530, 1840, 2480, 0.3, 0.3], [0.09, 560, 1850, 2500, 1, 0.05], [0.25, 420, 2050, 2700, 1, 0], [0.36, 300, 2250, 2900, 0.8, 0], [0.42, 300, 2250, 2900, 0, 0]] },
-  HO: { f0: [170, 130], k: [[0, 570, 840, 2410, 0, 0], [0.01, 570, 840, 2410, 0, 0.7], [0.05, 570, 840, 2410, 0.4, 0.2], [0.08, 600, 900, 2400, 1, 0], [0.24, 450, 800, 2300, 1, 0], [0.34, 320, 760, 2250, 0.7, 0], [0.4, 320, 760, 2250, 0, 0]] },
+  // HEY: a loud h, a voiced burst above full level (the tanh squashes it), pitch falling hard like a shout, cut off sharp
+  HEY: { f0: [230, 140], k: [[0, 600, 1900, 2600, 0, 0], [0.005, 600, 1900, 2600, 0, 1], [0.04, 600, 1900, 2600, 0.5, 0.5], [0.06, 650, 1900, 2600, 1.3, 0.1], [0.18, 480, 2100, 2750, 1, 0], [0.24, 350, 2250, 2900, 0.9, 0], [0.255, 350, 2250, 2900, 0, 0]] },
+  // HO: starts on an open 'aw' (high F1, mid F2) and closes toward o; a pure o reads as a tone, not a voice
+  HO: { f0: [210, 150], k: [[0, 650, 1100, 2600, 0, 0], [0.005, 650, 1100, 2600, 0, 0.9], [0.05, 650, 1100, 2600, 0.5, 0.4], [0.07, 680, 1150, 2600, 1.3, 0.05], [0.25, 600, 1000, 2500, 1, 0], [0.4, 500, 880, 2450, 0.9, 0], [0.415, 500, 880, 2450, 0, 0]] },
   YEAH: { f0: [160, 120], k: [[0, 270, 2290, 3010, 0, 0], [0.02, 270, 2290, 3010, 0.8, 0], [0.1, 450, 2000, 2700, 1, 0], [0.22, 660, 1720, 2410, 1, 0], [0.5, 700, 1500, 2400, 0.9, 0], [0.62, 700, 1450, 2400, 0, 0]] },
 };
 export const VOICES = Object.keys(WORDS);
+const SPEED = 0.7, LIFT = 1.3; // shorter and higher than the keyframes: a quick shout, not a drawl
 
 export function voice(word: string, fs: number, rnd = Math.random): Float32Array {
-  const { f0, k } = WORDS[word], len = k[k.length - 1][0], n = Math.round(len * fs), out = new Float32Array(n);
-  const bw = [90, 110, 150], st = [[0, 0], [0, 0], [0, 0]];
-  let ph = 0, lp = 0, pk = 0, j = 0;
+  const w = WORDS[word], f0 = w.f0.map(f => f * LIFT), k = w.k.map(([t, ...r]) => [t * SPEED, ...r] as Key), len = k[k.length - 1][0], n = Math.round(len * fs), out = new Float32Array(n);
+  const bw = [90, 120, 170], gain = [1, 0.8, 0.5], st = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+  let ph = 0, pk = 0, j = 0;
   for (let i = 0; i < n; i++) {
     const t = i / fs;
     while (j < k.length - 2 && t > k[j + 1][0]) j++;
     const a = k[j], b = k[j + 1], u = Math.min(1, (t - a[0]) / (b[0] - a[0])), at = (m: number) => a[m] + (b[m] - a[m]) * u;
-    ph += (f0[0] + (f0[1] - f0[0]) * t / len) / fs; if (ph >= 1) ph -= 1;
-    lp += ((1 - 2 * ph) - lp) * 0.3; // saw, softened toward a glottal pulse
-    const src = lp * at(4) + (rnd() * 2 - 1) * at(5);
+    const vib = 1 + 0.015 * Math.sin(2 * Math.PI * 5.5 * t); // a little wobble keeps it human
+    ph += (f0[0] + (f0[1] - f0[0]) * t / len) * vib / fs; if (ph >= 1) ph -= 1;
+    const src = (1 - 2 * ph) * at(4) + (rnd() * 2 - 1) * (at(5) + 0.04 * at(4)); // bright saw + breath
     let y = 0;
-    for (let f = 0; f < 3; f++) { // two-pole resonator at the formant
-      const r = Math.exp(-Math.PI * bw[f] / fs), c = 2 * r * Math.cos(2 * Math.PI * at(f + 1) / fs), s = st[f];
-      const v = (1 - r) * src + c * s[0] - r * r * s[1]; s[1] = s[0]; s[0] = v;
-      y += v / (f + 1);
+    for (let f = 0; f < 3; f++) { // RBJ band-pass at the formant, 0 dB at its peak
+      const w = 2 * Math.PI * at(f + 1) / fs, al = Math.sin(w) * bw[f] / (2 * at(f + 1)), a0 = 1 + al, c = -2 * Math.cos(w) / a0, d = (1 - al) / a0, g = al / a0;
+      const q = st[f], v = g * src - g * q[1] - c * q[2] - d * q[3];
+      q[1] = q[0]; q[0] = src; q[3] = q[2]; q[2] = v;
+      y += v * gain[f];
     }
-    out[i] = Math.tanh(y * 3); pk = Math.max(pk, Math.abs(out[i]));
+    out[i] = Math.tanh(y * 1.5); pk = Math.max(pk, Math.abs(out[i]));
   }
   return out.map(x => x / pk * 0.8);
 }
