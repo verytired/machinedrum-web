@@ -3,6 +3,7 @@ import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, defaultState, stepParams, type State } from './machines';
 import { demoSong, applyBar, BARS as demoBars, type Bar } from './demo';
 import { voice, VOICES } from './voice';
+import { kitSyx, patternSyx, readSyx } from './syx';
 import type { HitMsg, SmpMsg } from './dsp/md-processor';
 import procUrl from './dsp/md-processor.ts?worker&url';
 import wasmUrl from './dsp/md.wasm?url';
@@ -208,11 +209,24 @@ $('export').onclick = async () => {
   a.click(); URL.revokeObjectURL(a.href);
   flash('EXPORTED');
 };
-const importer = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json' });
+// .syx for a real Machinedrum (send it with C6 / mddt): kit + pattern, see src/syx.ts for what carries over
+$('syx').onclick = () => {
+  try {
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([kitSyx(st), patternSyx(st)])), download: `machinedrum-${new Date().toISOString().slice(0, 10)}.syx` });
+    a.click(); URL.revokeObjectURL(a.href);
+    flash('SYX EXPORTED');
+  } catch (e) { flash('SYX FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
+};
+const importer = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json,.syx' });
 importer.onchange = async () => {
   const f = importer.files?.[0]; importer.value = '';
   if (!f) return;
   try {
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    if (bytes[0] === 0xf0) {
+      const s = structuredClone(st), got = readSyx(bytes, s);
+      $('stop').click(); Object.assign(st, s); save(); applyFx(); flash('IMPORTED ' + got.join('+')); return;
+    }
     const b = JSON.parse(await f.text()) as Bundle;
     if (b?.app !== 'machinedrum-web' || !valid(b.st) || !Array.isArray(b.samples)) throw new Error('not a machinedrum-web file');
     $('stop').click();
