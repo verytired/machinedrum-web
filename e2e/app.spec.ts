@@ -218,3 +218,12 @@ test('CLEAR SONG deletes every song row (after a confirm)', async ({ page }) => 
   await page.click('#songkey');
   await expect(page.locator('#song tr')).toHaveCount(0);
 });
+
+test('RESET FX puts the echo and gate box back to their defaults', async ({ page }) => {
+  await page.click('#demo');
+  await page.click('#stop');
+  await page.click('#fxreset');
+  await expect(page.locator('#lstat')).toHaveText('FX RESET');
+  const fx = await page.evaluate(() => JSON.parse(localStorage.getItem('md-web-v1')!).fx);
+  expect(fx).toEqual({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100] });
+});

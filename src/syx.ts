@@ -46,7 +46,7 @@ export function kitSyx(st: State, name = 'MD-WEB'): Uint8Array<ArrayBuffer> {
   b.push(...enc7(st.kit.flatMap((t, tr) => be32(t.m === ROM ? 128 + rom[tr] : MD_ID[t.m]))));  // models (tonal flag off)
   b.push(...enc7(Array.from({ length: 576 }, (_, i) => i % 36 === 0 ? i / 36 : 0)));  // LFOs: each on its own track, depth is LFOD
   const e = st.fx.echo, g = st.fx.gate;
-  b.push(0, 0, g[2], 0, g[3], g[4], 127, g[7]);                                     // reverb: DEC, HP, LP, GATE on, LEV
+  b.push(0, g[0], g[2], g[1], g[3], g[4], 127, g[7]);                               // reverb: PRED = ATCK, DEC, DAMP = HOLD (no MD equivalents), HP, LP, GATE on, LEV
   b.push(e[0], 0, 0, e[1], e[2], e[3], 0, e[7]);                                    // delay: TIME, FB, FILF, FILW, LEV
   b.push(0, 64, 127, 64, 64, 64, 64, 64, ...Array(8).fill(0));                       // flat EQ, dynamix mix 0
   b.push(...enc7(Array(32).fill(255)));                                              // no trig / mute groups
@@ -163,7 +163,7 @@ export function applyKit(d: Uint8Array, st: State): number[] {
     slots.push(romSlot(id));
   }
   const r = d.subarray(0x487), e = d.subarray(0x48f);
-  st.fx = { echo: [e[0], e[3], e[4], e[5], 0, 0, 0, e[7]], gate: [st.fx.gate[0], st.fx.gate[1], r[2], r[4], r[5], 0, 0, r[7]] };
+  st.fx = { echo: [e[0], e[3], e[4], e[5], 0, 0, 0, e[7]], gate: [r[1], r[3], r[2], r[4], r[5], 0, 0, r[7]] };
   return slots;
 }
 

@@ -47,6 +47,7 @@ test('the demo as .syx (kit, patterns, song, voice samples) reads back to the sa
   for (const p of d.pats) { const { trig, lock, swing } = readPattern(p); back.pats[p[9]] = { trig, lock }; back.swing = swing; }
   back.song = readSong(d.songs[0]);
   expect(back.kit).toEqual(st.kit);
+  expect(back.fx).toEqual(st.fx);
   expect(back.pats).toEqual(st.pats);
   expect(back.song).toEqual(st.song);
   expect(back.swing).toBeCloseTo(0.2, 4);

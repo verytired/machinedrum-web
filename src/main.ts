@@ -190,6 +190,7 @@ function setMachine(d: number) {
 $('mprev').onclick = () => setMachine(-1);
 $('mnext').onclick = () => setMachine(1);
 document.querySelectorAll<HTMLElement>('[data-page]').forEach(b => b.onclick = () => { page = +b.dataset.page!; draw(); });
+$('fxreset').onclick = () => { st.fx = defaultFx(); save(); applyFx(); flash('FX RESET'); };
 $('clear').onclick = () => { st.trig[cur].fill(false); st.lock[cur].fill(null); save(); draw(); };
 
 // ---- ROM samples: LOAD (file picker) or drop an audio file on a track key ----
