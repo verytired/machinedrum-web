@@ -16,7 +16,7 @@ npm run check   # typecheck + unit tests + build + Playwright
 - Click a track name to select it; click a trig key to toggle a step; hold a trig and turn an encoder for a parameter lock
 - DEMO plays a built-in song
 - The pattern and kit are saved to localStorage automatically; EXPORT / IMPORT writes and reads everything (samples included) as one JSON file
-- EXP SYX writes the kit and pattern as Machinedrum SysEx (kit dump 0x52 + 32-step pattern dump 0x67); IMPORT also reads such a .syx (first 16 steps). Machines map by name, unknown ones become an empty ROM; LFOs, accents, track levels and tempo are not carried. The byte layout follows [mddt](https://github.com/waftlord/mddt) and is not yet tested on hardware
+- EXP SYX writes the kit and pattern as Machinedrum SysEx (kit dump 0x52 + 32-step pattern dump 0x67); IMPORT also reads such a .syx (first 16 steps). Machines map by name, unknown ones become an empty ROM; LFOs, accents, track levels and tempo are not carried. The writer matches [mddt](https://github.com/waftlord/mddt) byte for byte; the reader was checked on public hardware dumps (388 kit / pattern messages, all checksums and p-locks consistent). Writing to a real MD is still untested
 
 ## Disclaimer
 
