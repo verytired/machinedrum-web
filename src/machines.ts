@@ -18,6 +18,7 @@ export const MACHINES: Machine[] = [
   M('EFM-SD', 'PTCH DEC NOIS NDEC MOD MFRQ MDEC HP', [50, 40, 80, 50, 40, 80, 30, 80]),
   M('EFM-CB', 'PTCH DEC MOD MFRQ MDEC', [60, 50, 50, 90, 50]),
   M('EFM-HH', 'PTCH DEC MOD MFRQ MDEC HP', [100, 30, 90, 110, 60, 80]),
+  M('ROM', 'PTCH DEC STRT END', [64, 127, 0, 127]), // plays the WAV loaded into the track
 ];
 
 // Encoder pages: SYNTH = the machine's 8, then the track chain (– = not implemented yet)

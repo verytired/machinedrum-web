@@ -54,3 +54,23 @@ test('falls back to the JS engine when the WASM file is blocked', async ({ page 
   expect(await outPeak(page, 1000)).toBeGreaterThan(0.1);
   errors = errors.filter(e => !/wasm|Failed to load/i.test(e));
 });
+
+// 0.5 s 16-bit mono WAV of a 330 Hz sine
+function wav(): Buffer {
+  const sr = 44100, n = sr / 2, b = Buffer.alloc(44 + n * 2);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(sr, 24); b.writeUInt32LE(sr * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(Math.sin(i / sr * 2 * Math.PI * 330) * 16000), 44 + i * 2);
+  return b;
+}
+
+test('LOAD SMP puts a WAV on the track as a ROM machine and it plays', async ({ page }) => {
+  await page.locator('#tracks button').nth(13).click(); // M2
+  const chooser = page.waitForEvent('filechooser');
+  await page.click('#load');
+  await (await chooser).setFiles({ name: 'tone.wav', mimeType: 'audio/wav', buffer: wav() });
+  await expect(page.locator('#lmach')).toHaveText('ROM:TONE');
+  const pk = outPeak(page, 400);
+  await page.locator('#tracks button').nth(13).click();
+  expect(await pk).toBeGreaterThan(0.05);
+});

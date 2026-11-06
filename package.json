@@ -11,7 +11,7 @@
     "test": "npm run asbuild && vitest run",
     "e2e": "playwright test",
     "check": "npm run typecheck && npm test && npm run build && npm run e2e",
-    "asbuild": "asc assembly/md.ts -o src/dsp/md.wasm --runtime stub --use abort= -O3 --initialMemory 1 --maximumMemory 1"
+    "asbuild": "asc assembly/md.ts -o src/dsp/md.wasm --runtime stub --use abort= -O3 --initialMemory 1 --maximumMemory 300"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

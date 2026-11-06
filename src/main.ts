@@ -2,7 +2,7 @@ import { $, numbox } from './dom';
 import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, defaultState, stepParams, type State } from './machines';
 import { demoSong, applyBar, BARS as demoBars, type Bar } from './demo';
-import type { HitMsg } from './dsp/md-processor';
+import type { HitMsg, SmpMsg } from './dsp/md-processor';
 import procUrl from './dsp/md-processor.ts?worker&url';
 import wasmUrl from './dsp/md.wasm?url';
 
@@ -141,10 +141,31 @@ $('mnext').onclick = () => setMachine(1);
 document.querySelectorAll<HTMLElement>('[data-page]').forEach(b => b.onclick = () => { page = +b.dataset.page!; draw(); });
 $('clear').onclick = () => { st.trig[cur].fill(false); st.lock[cur].fill(null); save(); draw(); };
 
+// ---- ROM samples: LOAD (file picker) or drop an audio file on a track key ----
+// ponytail: samples live only in memory, a reload leaves ROM tracks silent; persist to IndexedDB if that bites
+const smpName: string[] = Array(16).fill('');
+async function loadSample(tr: number, f: File) {
+  await ensureAudio();
+  const ab = await ctx!.decodeAudioData(await f.arrayBuffer()); // resampled to the context rate
+  const d = new Float32Array(ab.length);
+  for (let c = 0; c < ab.numberOfChannels; c++) ab.getChannelData(c).forEach((v, i) => d[i] += v / ab.numberOfChannels);
+  node!.port.postMessage({ k: 'smp', tr, d } satisfies SmpMsg, [d.buffer]);
+  smpName[tr] = f.name.replace(/\.[^.]+$/, '').toUpperCase().slice(0, 12);
+  cur = tr;
+  if (st.kit[tr].m !== ROM) { st.kit[tr] = { m: ROM, p: MACHINES[ROM].defs.concat(st.kit[tr].p.slice(8)) }; st.lock[tr].forEach(l => { if (l) for (let i = 0; i < 8; i++) delete l[i]; }); save(); }
+  draw(); hit(tr, ctx!.currentTime, stepParams(st, tr, -1));
+}
+const ROM = MACHINES.findIndex(m => m.name === 'ROM');
+const picker = Object.assign(document.createElement('input'), { type: 'file', accept: 'audio/*' });
+picker.onchange = () => { if (picker.files?.[0]) loadSample(cur, picker.files[0]); picker.value = ''; };
+$('load').onclick = () => picker.click();
+
 // ---- track keys + trig keys ----
 const trackBtns = TRACKS.map((name, i) => {
   const b = document.createElement('button'); b.textContent = name;
   b.onclick = async () => { cur = i; draw(); await ensureAudio(); hit(i, ctx!.currentTime, stepParams(st, i, -1)); };
+  b.ondragover = e => e.preventDefault();
+  b.ondrop = e => { e.preventDefault(); const f = e.dataTransfer?.files[0]; if (f) loadSample(i, f); };
   $('tracks').append(b); return b;
 });
 const trigBtns = Array.from({ length: 16 }, (_, i) => {
@@ -179,7 +200,7 @@ function drawSteps() {
 function draw() {
   const t = st.kit[cur], labs = labels();
   $('ltrack').textContent = `T${String(cur + 1).padStart(2, '0')}:${TRACKS[cur].padEnd(2)}`;
-  $('lmach').textContent = MACHINES[t.m].name;
+  $('lmach').textContent = MACHINES[t.m].name + (t.m === ROM ? ':' + (smpName[cur] || 'EMPTY') : '');
   $('lengine').textContent = engine;
   $('lgrid').innerHTML = labs.map((lab, k) =>
     `<span class="${!lab ? 'off' : lockOf(k) !== undefined ? 'lk' : ''}"><i>${lab || '----'}</i><b>${lab ? pad(val(k)) : ''}</b></span>`).join('');

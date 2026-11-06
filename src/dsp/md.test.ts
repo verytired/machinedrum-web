@@ -6,13 +6,17 @@ import { demoSong, applyBar } from '../demo';
 import { gateIR } from '../fx';
 
 const SR = 48000;
+// test sample for the ROM machine: 0.3 s of a decaying 220 Hz sine with some 2nd harmonic
+const SMP = Float32Array.from({ length: SR * 0.3 }, (_, i) => (Math.sin(i / SR * 2 * Math.PI * 220) + 0.3 * Math.sin(i / SR * 2 * Math.PI * 440)) * Math.exp(-i / SR * 8) * 0.7);
 interface Engine { trig(tr: number, m: number, p: number[]): void; render(o: Float32Array[], off: number, n: number): void }
 
 function wasmEngine(): Engine {
   const x = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(new URL('./md.wasm', import.meta.url))), {}).exports as unknown as {
     memory: WebAssembly.Memory; init(sr: number): void; outPtr(): number; parPtr(): number; trig(tr: number, m: number): void; render(n: number): void;
+    smpPtr(tr: number): number; smpLen(tr: number, n: number): void;
   };
   x.init(SR);
+  for (let tr = 0; tr < 16; tr++) { new Float32Array(x.memory.buffer, x.smpPtr(tr), SMP.length).set(SMP); x.smpLen(tr, SMP.length); }
   const buf = new Float32Array(x.memory.buffer, x.outPtr(), 128 * NOUT), par = new Float64Array(x.memory.buffer, x.parPtr(), NPAR);
   return {
     trig(tr, m, p) { par.set(p); x.trig(tr, m); },
@@ -39,7 +43,7 @@ function drive(e: Engine, hits: Hit[], frames: number) {
   return o;
 }
 const peak = (a: Float32Array, from = 0, to = a.length) => { let p = 0; for (let i = from; i < to; i++) p = Math.max(p, Math.abs(a[i])); return p; };
-const js = () => new MdEngine(SR);
+const js = () => { const e = new MdEngine(SR); for (let tr = 0; tr < 16; tr++) e.sample(tr, SMP); return e; };
 
 describe('MD engine', () => {
   it('WASM matches the TS engine, every machine plus locked track params', () => {
@@ -48,6 +52,7 @@ describe('MD engine', () => {
     const locked = trackFor(8).p; locked[FLTW] = 60; locked[DIST] = 80; locked[SRR] = 20; locked[AMD] = 70; locked[DEL] = 90; locked[REV] = 50;
     hits.push([12 * s + 5, 12, 8, locked]);
     hits.push([13 * s, 7, 7, trackFor(7).p]); // retrigger mid-tail
+    const rev = trackFor(12).p; rev[0] = 71; rev[2] = 100; rev[3] = 10; hits.push([14 * s + 3, 13, 12, rev]); // ROM reversed, pitched up
     const n = 16 * s, ao = drive(js(), hits, n), bo = drive(wasmEngine(), hits, n), a = ao[0];
     let err = 0;
     for (let k = 0; k < NOUT; k++) for (let i = 0; i < n; i++) err = Math.max(err, Math.abs(ao[k][i] - bo[k][i]));

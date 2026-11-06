@@ -7,6 +7,7 @@
 export const NPAR = 24;
 export const AMD = 8, AMF = 9, EQF = 10, EQG = 11, FLTF = 12, FLTW = 13, FLTQ = 14, SRR = 15, DIST = 16, VOL = 17, PAN = 18, DEL = 19, REV = 20;
 export const NOUT = 6; // dry L/R, echo send L/R, gate box send L/R
+export const MAXS = 1 << 18; // ROM sample length cap per track (~5.5 s at 48 kHz)
 
 const TAU = 2 * Math.PI;
 const LN1000 = 6.907755278982137;
@@ -69,11 +70,13 @@ class Voice {
   noiseF: Svf; metalF: Svf;
   mph6 = [0, 0, 0, 0, 0, 0]; mdt = [0, 0, 0, 0, 0, 0];
   imp = 0; nb = 0; bc = 0; cdec = 0.1;
+  // ROM: the track's sample, played from sp toward se at sd samples per tick (negative = reverse)
+  smp = new Float32Array(1); slen = 0; sp = 0; sd = 0; se = 0; son = 0; smpE: Env;
   // track chain
   amd = 0; amf = 1; amph = 0; eq: Peq; hp: Svf; lp: Svf; sk = 1; sc = 0; sh = 0; dg = 0; gl = 0; gr = 0; dl = 0; dr = 0; rl = 0; rr = 0; // dl..rr: post-fader sends to echo / gate box
 
   constructor(private fs: number) {
-    this.toneE = new Env(fs); this.noiseE = new Env(fs); this.metalE = new Env(fs);
+    this.toneE = new Env(fs); this.noiseE = new Env(fs); this.metalE = new Env(fs); this.smpE = new Env(fs);
     this.noiseF = new Svf(fs); this.metalF = new Svf(fs);
     this.eq = new Peq(fs); this.hp = new Svf(fs); this.lp = new Svf(fs);
   }
@@ -88,7 +91,7 @@ class Voice {
   }
 
   trig(m: number, p: ArrayLike<number>) {
-    this.pamt = 0; this.iamt = 0;
+    this.pamt = 0; this.iamt = 0; this.son = 0;
     if (m == 0) { this.tone(ex(p[0], 20, 2000), 1, ex(p[1], 0.01, 4)); this.sweep(p[2] / 127 * 8, ex(p[3], 0.005, 1)); } // GND-SN
     else if (m == 1) this.noise(1, ex(p[0], 0.01, 4), 18000, 0.7, LP); // GND-NS
     else if (m == 2) this.imp = 1; // GND-IM
@@ -115,6 +118,9 @@ class Voice {
     } else if (m == 11) { // EFM-HH
       this.tone(ex(p[0], 200, 2000), 0.4, ex(p[1], 0.01, 1)); this.fm(p[2] / 127 * 20, ex(p[3], 0.5, 8), ex(p[4], 0.005, 1));
       this.noise(0.3, ex(p[1], 0.01, 1), ex(p[5], 2000, 12000), 0.7, HP);
+    } else if (m == 12 && this.slen > 1) { // ROM: PTCH 2 steps per semitone around 64, END < STRT plays reverse
+      const n = this.slen - 1, a = p[2] / 127 * n, b = p[3] / 127 * n, r = Math.pow(2, (p[0] - 64) / 24);
+      this.sp = a; this.se = b; this.sd = b >= a ? r : -r; this.son = 1; this.smpE.trig(1, ex(p[1], 0.02, 10));
     }
     this.amd = p[AMD] / 127; this.amf = ex(p[AMF], 0.5, 2000);
     this.eq.set(ex(p[EQF], 50, 15000), (p[EQG] - 64) / 64 * 18);
@@ -150,6 +156,12 @@ class Voice {
     }
     x += this.metalF.tick(metal) * 0.3 * this.metalE.tick();
     x += this.imp; this.imp = 0;
+    if (this.son > 0) {
+      const i = Math.floor(this.sp), fr = this.sp - i, a = this.smp[i], b = this.smp[Math.min(i + 1, this.slen - 1)];
+      x += (a + (b - a) * fr) * this.smpE.tick();
+      this.sp += this.sd;
+      if (this.sd > 0 ? this.sp > this.se : this.sp < this.se) this.son = 0;
+    }
     // track chain
     if (this.amd > 0) {
       x *= 1 - this.amd * (0.5 + 0.5 * Math.sin(TAU * this.amph));
@@ -168,6 +180,8 @@ export class MdEngine {
   private seed = 0x12345678;
   constructor(fs: number) { for (let i = 0; i < 16; i++) this.vs.push(new Voice(fs)); }
   trig(tr: number, m: number, p: ArrayLike<number>) { this.vs[tr].trig(m, p); }
+  // load a mono sample (at the engine rate) into a track for the ROM machine
+  sample(tr: number, d: Float32Array) { const v = this.vs[tr]; v.slen = Math.min(d.length, MAXS); v.smp = d.slice(0, v.slen); v.son = 0; }
   // o: dry L/R, echo send L/R, gate box send L/R
   render(o: Float32Array[], off: number, n: number) {
     for (let i = 0; i < n; i++) {

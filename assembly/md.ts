@@ -5,6 +5,7 @@ const AMD = 8, AMF = 9, EQF = 10, EQG = 11, FLTF = 12, FLTW = 13, FLTQ = 14, SRR
 const TAU: f64 = 2 * Math.PI;
 const LN1000: f64 = 6.907755278982137;
 const ATTACK: f64 = 0.0003;
+const MAXS: i32 = 1 << 18; // ROM sample cap per track; 16 x 1 MB is why maximumMemory is 300 pages
 const LP = 0, BP = 1, HP = 2;
 const METAL: StaticArray<f64> = [245, 306, 365, 415, 437, 619];
 
@@ -61,12 +62,13 @@ class Voice {
   noiseF: Svf; metalF: Svf;
   mph6: StaticArray<f64> = new StaticArray<f64>(6); mdt: StaticArray<f64> = new StaticArray<f64>(6);
   imp: f64 = 0; nb: f64 = 0; bc: f64 = 0; cdec: f64 = 0.1;
+  smp: StaticArray<f32> = new StaticArray<f32>(MAXS); slen: i32 = 0; sp: f64 = 0; sd: f64 = 0; se: f64 = 0; son: i32 = 0; smpE: Env;
   amd: f64 = 0; amf: f64 = 1; amph: f64 = 0; eq: Peq; hp: Svf; lp: Svf; sk: f64 = 1; sc: f64 = 0; sh: f64 = 0; dg: f64 = 0; gl: f64 = 0; gr: f64 = 0; dl: f64 = 0; dr: f64 = 0; rl: f64 = 0; rr: f64 = 0;
   fs: f64;
 
   constructor(fs: f64) {
     this.fs = fs;
-    this.toneE = new Env(fs); this.noiseE = new Env(fs); this.metalE = new Env(fs);
+    this.toneE = new Env(fs); this.noiseE = new Env(fs); this.metalE = new Env(fs); this.smpE = new Env(fs);
     this.noiseF = new Svf(fs); this.metalF = new Svf(fs);
     this.eq = new Peq(fs); this.hp = new Svf(fs); this.lp = new Svf(fs);
   }
@@ -81,7 +83,7 @@ class Voice {
   }
 
   trig(m: i32, p: StaticArray<f64>): void {
-    this.pamt = 0; this.iamt = 0;
+    this.pamt = 0; this.iamt = 0; this.son = 0;
     if (m == 0) { this.tone(ex(p[0], 20, 2000), 1, ex(p[1], 0.01, 4)); this.sweep(p[2] / 127 * 8, ex(p[3], 0.005, 1)); }
     else if (m == 1) this.noise(1, ex(p[0], 0.01, 4), 18000, 0.7, LP);
     else if (m == 2) this.imp = 1;
@@ -108,6 +110,9 @@ class Voice {
     } else if (m == 11) {
       this.tone(ex(p[0], 200, 2000), 0.4, ex(p[1], 0.01, 1)); this.fm(p[2] / 127 * 20, ex(p[3], 0.5, 8), ex(p[4], 0.005, 1));
       this.noise(0.3, ex(p[1], 0.01, 1), ex(p[5], 2000, 12000), 0.7, HP);
+    } else if (m == 12 && this.slen > 1) {
+      const n = <f64>(this.slen - 1), a = p[2] / 127 * n, b = p[3] / 127 * n, r = Math.pow(2, (p[0] - 64) / 24);
+      this.sp = a; this.se = b; this.sd = b >= a ? r : -r; this.son = 1; this.smpE.trig(1, ex(p[1], 0.02, 10));
     }
     this.amd = p[AMD] / 127; this.amf = ex(p[AMF], 0.5, 2000);
     this.eq.set(ex(p[EQF], 50, 15000), (p[EQG] - 64) / 64 * 18);
@@ -143,6 +148,13 @@ class Voice {
     }
     x += this.metalF.tick(metal) * 0.3 * this.metalE.tick();
     x += this.imp; this.imp = 0;
+    if (this.son > 0) {
+      const i = <i32>Math.floor(this.sp), fr = this.sp - <f64>i;
+      const a = <f64>unchecked(this.smp[i]), b = <f64>unchecked(this.smp[min(i + 1, this.slen - 1)]);
+      x += (a + (b - a) * fr) * this.smpE.tick();
+      this.sp += this.sd;
+      if (this.sd > 0 ? this.sp > this.se : this.sp < this.se) this.son = 0;
+    }
     if (this.amd > 0) {
       x *= 1 - this.amd * (0.5 + 0.5 * Math.sin(TAU * this.amph));
       this.amph += this.amf / fs; if (this.amph >= 1) this.amph -= 1;
@@ -164,6 +176,9 @@ export function init(fs: f64): void { for (let i = 0; i < 16; i++) vs.push(new V
 export function outPtr(): usize { return changetype<usize>(out); }
 export function parPtr(): usize { return changetype<usize>(par); }
 export function trig(tr: i32, m: i32): void { unchecked(vs[tr]).trig(m, par); }
+// ROM sample: JS writes up to MAXS floats at smpPtr(tr), then calls smpLen(tr, n)
+export function smpPtr(tr: i32): usize { return changetype<usize>(unchecked(vs[tr]).smp); }
+export function smpLen(tr: i32, n: i32): void { const v = unchecked(vs[tr]); v.slen = min(n, MAXS); v.son = 0; }
 
 export function render(n: i32): void {
   for (let i = 0; i < n; i++) {
