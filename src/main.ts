@@ -2,7 +2,7 @@ import { $, numbox } from './dom';
 import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, defaultState, stepParams, type State, type Pat } from './machines';
 import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
-import { demoSong, demoState, applyBar, BARS as demoBars, type Bar } from './demo';
+import { demoSong, demoState } from './demo';
 import { voice, VOICES } from './voice';
 import { stateSyx, parseSyx, applyKit, readPattern, readSong, patName, patKit, kitName, isEmpty, wav, type Dump, type Sample } from './syx';
 import type { HitMsg, SmpMsg } from './dsp/md-processor';
@@ -28,14 +28,20 @@ function valid(s: State | undefined): s is State {
   if (!(Array.isArray(s.song) && s.song.length <= 256 && s.song.every(rowOk))) s.song = [];
   return true;
 }
+// First run (nothing saved), or the page opened with ?factory (= factory reset): the factory content, as on the MD.
+// It is the demo song: patterns from A01, the song, its kit and voice samples (press SONG, then PLAY)
+const factory = new URLSearchParams(location.search).has('factory');
+if (factory) history.replaceState(null, '', location.pathname);
+let fresh = false;
 function load(): State {
-  try { const s = JSON.parse(localStorage.getItem(KEY) ?? ''); if (valid(s)) return s; } catch { /* first run */ }
-  return defaultState();
+  if (!factory) try { const s = JSON.parse(localStorage.getItem(KEY) ?? ''); if (valid(s)) return s; } catch { /* first run */ }
+  fresh = true;
+  return demoState();
 }
 const st = load();
 const stash = () => { st.pats[st.pat] = { trig: st.trig, lock: st.lock }; };
 const save = () => { stash(); try { localStorage.setItem(KEY, JSON.stringify(st)); } catch { /* private mode */ } };
-let msg = '', cur = 0, page = 0, held = -1, heldEdited = false, latched = false, skipUp = false, pos = -1, songPos = 0, level = 100;
+let msg = '', cur = 0, page = 0, held = -1, heldEdited = false, latched = false, skipUp = false, pos = -1, level = 100;
 
 // ---- audio ----
 let fx: ReturnType<typeof masterFx> | undefined;
@@ -66,7 +72,6 @@ const hit = (tr: number, t: number, p: number[]) => node!.port.postMessage({ t, 
 
 // ---- sequencer (lookahead scheduler, as in AfterBirth's transport.ts) ----
 let playing = false, nextT = 0, step = 0, timer: ReturnType<typeof setInterval> | undefined;
-let demo: Bar[] | null = null, demoBar = 0, swing = 0; // swing: the demo's (st.swing otherwise)
 // song mode: sp = the song pointer while playing, songRow = where PLAY starts, cue = row picked while playing
 // pattern mode: a pattern picked while playing waits in `queued` for the end of the pattern
 let songMode = false, sp: Pos | null = null, songRow = 0, cue = -1, queued = -1, first = 0, last = 16, mute = 0, newBar = true;
@@ -77,14 +82,10 @@ function usePat(n: number) {
   const p = st.pats[n] ?? { trig: TRACKS.map(() => Array<boolean>(16).fill(false)), lock: TRACKS.map(() => Array(16).fill(null)) };
   st.pat = n; st.trig = p.trig; st.lock = p.lock; save(); draw();
 }
-// top of a bar: the demo's next bar, the song's next row or a queued pattern. false = stop here
+// top of a bar: the song's next row or a queued pattern. false = stop here
 function bar(t: number): boolean {
   first = 0; last = 16; mute = 0;
-  if (demo) {
-    if (demoBar >= demo.length) { finish(t); return false; }
-    applyBar(st, demo[demoBar++]);
-    const n = demoBar; at(t, () => { songPos = n; draw(); });
-  } else if (songMode) {
+  if (songMode) {
     const n = cue >= 0 ? enter(st.song, cue) : sp ? next(st.song, sp) : enter(st.song, songRow);
     cue = -1;
     if (!n || 'halt' in n) { songRow = n ? n.halt : 0; sp = null; at(t, draw); finish(t); return false; } // END / HALT
@@ -101,7 +102,7 @@ function tick() {
   while (nextT < ctx!.currentTime + 0.1) {
     const t = nextT;
     if (newBar) { newBar = false; if (!bar(t)) return; step = first; }
-    const i = step, ts = t + (i % 2 ? (demo ? swing : st.swing) * 60 / tempo.value / 4 : 0);
+    const i = step, ts = t + (i % 2 ? st.swing * 60 / tempo.value / 4 : 0);
     for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) hit(tr, ts, stepParams(st, tr, i));
     at(t, () => { pos = i; drawSteps(); });
     nextT += 60 / tempo.value / 4;
@@ -115,20 +116,10 @@ $('play').onclick = async () => {
   timer = setInterval(tick, 25);
   $('play').classList.add('on'); draw();
 };
-$('demo').onclick = async () => {
-  $('stop').click();
-  const d = demoSong();
-  await ensureAudio();
-  // the demo's ROM tracks get the built-in voice samples
-  await Promise.all(Object.entries(d.voices).map(([tr, w]) => setSample(TRACKS.indexOf(tr), { name: w, voice: w })));
-  tempo.set(d.tempo); // saves; the demo kit/bars below are not saved unless you edit during the demo
-  st.kit = d.kit; st.fx = d.fx; applyFx(); demo = d.bars; demoBar = 0; songPos = 0; swing = d.swing;
-  $('play').click();
-};
 // song mode: STOP holds the position, a second STOP goes back to the first row
 $('stop').onclick = () => {
   if (!playing) songRow = 0; else if (sp) songRow = sp.row;
-  node?.port.postMessage({ k: 'flush' }); playing = false; demo = null; sp = null; cue = queued = -1; songPos = 0; swing = 0;
+  node?.port.postMessage({ k: 'flush' }); playing = false; sp = null; cue = queued = -1;
   clearInterval(timer); pos = -1; $('play').classList.remove('on'); draw();
 };
 const tempo = numbox($('tempo'), 30, 300, st.tempo, v => { st.tempo = v; save(); applyFx(); });
@@ -208,7 +199,10 @@ const idb = <T,>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest<
   const q = f(d.transaction('smp', mode).objectStore('smp')); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
 }));
 // what was saved last time: names show right away, audio is decoded once the AudioContext exists
-const restored = Promise.all(TRACKS.map((_, tr) => idb<Saved | undefined>('readonly', s => s.get(tr)).catch(() => undefined)))
+// factory content: its ROM tracks get the demo voices, the other tracks' samples are dropped
+const voices: Record<string, string> = demoSong().voices;
+const restored = Promise.all(TRACKS.map((n, tr) => !fresh ? idb<Saved | undefined>('readonly', s => s.get(tr)).catch(() => undefined)
+  : (voices[n] ? idb('readwrite', o => o.put({ name: voices[n], voice: voices[n] }, tr)) : idb('readwrite', o => o.delete(tr))).catch(() => {}).then(() => voices[n] ? { name: voices[n], voice: voices[n] } : undefined)))
   .then(all => { all.forEach((s, tr) => { if (s) { smpName[tr] = s.name; saved[tr] = s; } }); draw(); return all; });
 
 async function setSample(tr: number, s: Saved, persist = true) {
@@ -247,8 +241,7 @@ $('export').onclick = async () => {
   a.click(); URL.revokeObjectURL(a.href);
   flash('EXPORTED');
 };
-// .syx for a real Machinedrum (send it with C6 / mddt): kit, used patterns, song, ROM samples; see src/syx.ts for what carries over.
-// During the DEMO it writes the demo (as a song), so IMPORT + SONG + PLAY plays it back.
+// .syx for a real Machinedrum (send it with C6 / mddt): kit, used patterns, song, ROM samples; see src/syx.ts for what carries over
 const SR = 44100;
 async function pcm(x: Saved): Promise<Sample> {
   if (x.voice) return { slot: 0, rate: SR, d: voice(x.voice, SR) };
@@ -258,12 +251,12 @@ async function pcm(x: Saved): Promise<Sample> {
 }
 $('syx').onclick = async () => {
   try {
-    const s = demo ? demoState() : (stash(), st);
+    stash();
     await restored;
     const smp = await Promise.all(saved.map(x => x ? pcm(x).catch(() => undefined) : undefined));
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([stateSyx(s, smp)])), download: `machinedrum-${demo ? 'demo' : new Date().toISOString().slice(0, 10)}.syx` });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([stateSyx(st, smp)])), download: `machinedrum-${new Date().toISOString().slice(0, 10)}.syx` });
     a.click(); URL.revokeObjectURL(a.href);
-    flash(demo ? 'DEMO SYX EXPORTED' : 'SYX EXPORTED');
+    flash('SYX EXPORTED');
   } catch (e) { flash('SYX FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
 };
 // imported .syx files (kits, patterns, songs, SDS samples) stay here; patterns go to their slots, the song to SONG mode.
@@ -272,7 +265,6 @@ let dump: Dump = { kits: [], pats: [], songs: [], samples: [] };
 const patSel = $('pat') as HTMLSelectElement;
 async function usePattern(i: number) {
   const p = dump.pats[i], k = p ? dump.kits.find(k => k[9] === patKit(p)) ?? dump.kits[0] : dump.kits[0];
-  if (demo) $('stop').click(); // the demo would keep playing its bars on the imported kit
   const s = structuredClone(st);
   const slots = k ? applyKit(k, s) : [];
   Object.assign(st, s);
@@ -296,7 +288,6 @@ importer.onchange = async () => {
     if (bufs.every(b => b[0] === 0xf0)) {   // .syx: kits / patterns replace the previous ones, samples add up
       const ds = bufs.map(parseSyx), kits = ds.flatMap(d => d.kits), pats = ds.flatMap(d => d.pats).filter(p => !isEmpty(p));
       dump = { kits: kits.length ? kits : dump.kits, pats: pats.length || kits.length ? pats : dump.pats, songs: [], samples: [...ds.flatMap(d => d.samples), ...dump.samples] };
-      if (demo) $('stop').click();
       stash();
       for (const p of ds.flatMap(d => d.pats)) { const { trig, lock } = readPattern(p); st.pats[p[9] & 0x7f] = { trig, lock }; }
       if (pats.length) st.swing = readPattern(pats[0]).swing;
@@ -330,8 +321,8 @@ const drawBank = () => { stash(); bankSel.replaceChildren(...st.pats.map((p, n) 
 bankSel.onchange = () => {
   const n = +bankSel.value;
   if (!playing) usePat(n);
-  else if (!demo && !songMode) { queued = n; draw(); } // takes over at the end of the pattern
-  else draw(); // the song / demo picks the patterns
+  else if (!songMode) { queued = n; draw(); } // takes over at the end of the pattern
+  else draw(); // the song picks the patterns
 };
 let clip: Pat | null = null;
 $('copy').onclick = () => { clip = structuredClone({ trig: st.trig, lock: st.lock }); flash(slotName(st.pat) + ' COPIED'); };
@@ -440,7 +431,7 @@ function draw() {
   songEl.querySelectorAll('tr').forEach((tr, i) => { tr.classList.toggle('cur', i === songRow); tr.classList.toggle('cue', i === cue); });
   $('lgrid').innerHTML = labs.map((lab, k) =>
     `<span class="${!lab ? 'off' : lockOf(k) !== undefined ? 'lk' : ''}"><i>${lab || '----'}</i><b>${lab ? pad(val(k)) : ''}</b></span>`).join('');
-  $('lstat').textContent = msg ? msg : held >= 0 ? `LOCK STEP ${held + 1} - TURN AN ENCODER${latched ? ' / CLICK A TRIG TO RELEASE' : ''}` : songPos ? `DEMO  BAR ${songPos}/${demoBars}` : songMode ? songStat() : PAGES[page];
+  $('lstat').textContent = msg ? msg : held >= 0 ? `LOCK STEP ${held + 1} - TURN AN ENCODER${latched ? ' / CLICK A TRIG TO RELEASE' : ''}` : songMode ? songStat() : PAGES[page];
   encs.forEach((lab, k) => {
     lab.classList.toggle('off', !labs[k]);
     lab.querySelector('b')!.textContent = labs[k] || '-';

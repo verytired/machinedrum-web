@@ -41,7 +41,7 @@ test('the demo as .syx (kit, patterns, song, voice samples) reads back to the sa
   const st = demoState(), rom = romSlots(st);
   const smp = st.kit.map((_, tr) => rom[tr] >= 0 ? { slot: 0, rate: 44100, d: voice(['HEY', 'HO', 'YEAH'][rom[tr]] ?? 'HEY', 44100, () => 0.5) } : undefined);
   const d = parseSyx(stateSyx(st, smp));
-  expect([d.kits.length, d.pats.length, d.songs.length, d.samples.map(s => s.slot)]).toEqual([1, 29, 1, [0, 1, 2]]);
+  expect([d.kits.length, d.pats.length, d.songs.length, d.samples.map(s => s.slot)]).toEqual([1, st.pats.filter(Boolean).length, 1, [0, 1, 2]]);
   const back = defaultState();
   applyKit(d.kits[0], back);
   for (const p of d.pats) { const { trig, lock, swing } = readPattern(p); back.pats[p[9]] = { trig, lock }; back.swing = swing; }

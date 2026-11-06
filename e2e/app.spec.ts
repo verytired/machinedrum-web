@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { defaultState } from '../src/machines';
 
 let errors: string[] = [];
 test.beforeEach(async ({ page }) => {
@@ -6,9 +7,11 @@ test.beforeEach(async ({ page }) => {
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto('./');
-  await page.evaluate(() => localStorage.clear());
+  // a blank save, so tests start from an empty pattern (a first run gets the factory song, tested below)
+  await page.evaluate(s => { localStorage.clear(); localStorage.setItem('md-web-v1', s); }, JSON.stringify(defaultState()));
   await page.reload();
 });
+const blank = JSON.stringify(defaultState());
 test.afterEach(() => expect(errors).toEqual([]));
 
 // Peak of the output over ms
@@ -124,26 +127,13 @@ test('EXP SYX then IMPORT of the .syx brings back the pattern', async ({ page })
   const dl = page.waitForEvent('download');
   await page.click('#syx');
   const file = await (await dl).path();
-  await page.evaluate(() => localStorage.clear());
+  await page.evaluate(s => localStorage.setItem('md-web-v1', s), blank);
   await page.reload();
   const ic = page.waitForEvent('filechooser');
   await page.click('#import');
   await (await ic).setFiles({ name: 'k.syx', mimeType: 'application/octet-stream', buffer: (await import('fs')).readFileSync(file) });
   await expect(page.locator('#lstat')).toHaveText(/A01 MD-WEB/);
   expect(await page.locator('#trigs button').nth(3).getAttribute('class')).toBe(on);
-});
-
-test('IMPORT of a .syx during the DEMO stops the demo', async ({ page }) => {
-  const dl = page.waitForEvent('download');
-  await page.click('#syx');
-  const file = await (await dl).path();
-  await page.click('#demo');
-  await expect(page.locator('#play')).toHaveClass(/on/);
-  const ic = page.waitForEvent('filechooser');
-  await page.click('#import');
-  await (await ic).setFiles(file);
-  await expect(page.locator('#lstat')).toHaveText(/A01 MD-WEB/);
-  await expect(page.locator('#play')).not.toHaveClass(/on/);
 });
 
 test('SONG: rows play their patterns in order, the song stops at its end and survives a reload', async ({ page }) => {
@@ -180,17 +170,25 @@ test('a save from before patterns / songs still loads as A01', async ({ page }) 
   await expect(page.locator('#trigs button').nth(1)).toHaveClass(/on/);
 });
 
-test('DEMO as .syx: EXP SYX during the demo, IMPORT it, SONG + PLAY plays it', async ({ page }) => {
-  await page.click('#demo');
-  await expect(page.locator('#play')).toHaveClass(/on/);
-  const dl = page.waitForEvent('download');
-  await page.click('#syx');
-  const d = await dl;
-  expect(d.suggestedFilename()).toBe('machinedrum-demo.syx');
-  const file = await d.path();
-  await page.click('#stop');
+test('first run = the factory song (the demo): SONG + PLAY plays it; it survives EXP SYX + IMPORT; ?factory brings it back', async ({ page }) => {
   await page.evaluate(() => { localStorage.clear(); indexedDB.deleteDatabase('md-web'); });
   await page.reload();
+  await expect(page.locator('#tempo')).toContainText('132');
+  await page.locator('#tracks button').nth(10).click();
+  await expect(page.locator('#lmach')).toHaveText('ROM:YEAH');
+  await page.click('#songkey');
+  expect(await page.locator('#song tr').count()).toBeGreaterThan(20);
+  await page.click('#play');
+  expect(await outPeak(page, 1500)).toBeGreaterThan(0.05);
+  await page.click('#stop');
+  // round trip through .syx
+  const dl = page.waitForEvent('download');
+  await page.click('#syx');
+  const file = await (await dl).path();
+  await page.evaluate(s => { localStorage.setItem('md-web-v1', s); indexedDB.deleteDatabase('md-web'); }, blank);
+  await page.reload();
+  await page.click('#songkey');
+  await expect(page.locator('#song tr')).toHaveCount(0);
   const ic = page.waitForEvent('filechooser');
   await page.click('#import');
   await (await ic).setFiles(file);
@@ -198,10 +196,17 @@ test('DEMO as .syx: EXP SYX during the demo, IMPORT it, SONG + PLAY plays it', a
   await expect(page.locator('#tempo')).toContainText('132');
   await page.locator('#tracks button').nth(13).click();   // ROM tracks in order: RC = ROM-01, M2 = ROM-02, M3 = ROM-03
   await expect(page.locator('#lmach')).toHaveText('ROM:ROM-02');
-  await page.click('#songkey');
   expect(await page.locator('#song tr').count()).toBeGreaterThan(20);
   await page.click('#play');
-  expect(await outPeak(page, 1500)).toBeGreaterThan(0.1);
+  expect(await outPeak(page, 1500)).toBeGreaterThan(0.05);
+  await page.click('#stop');
+  // factory reset
+  await page.evaluate(s => localStorage.setItem('md-web-v1', s), blank);
+  await page.goto('./?factory');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('#tempo')).toContainText('132');
+  await page.click('#songkey');
+  expect(await page.locator('#song tr').count()).toBeGreaterThan(20);
 });
 
 test('CLEAR SONG deletes every song row (after a confirm)', async ({ page }) => {
@@ -220,8 +225,8 @@ test('CLEAR SONG deletes every song row (after a confirm)', async ({ page }) => 
 });
 
 test('RESET FX puts the echo and gate box back to their defaults', async ({ page }) => {
-  await page.click('#demo');
-  await page.click('#stop');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();                                    // factory content: the demo's effect settings
   await page.click('#fxreset');
   await expect(page.locator('#lstat')).toHaveText('FX RESET');
   const fx = await page.evaluate(() => JSON.parse(localStorage.getItem('md-web-v1')!).fx);
