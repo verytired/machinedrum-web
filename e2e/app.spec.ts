@@ -234,7 +234,7 @@ test('RESET FX puts the echo and gate box back to their defaults', async ({ page
 });
 
 test('FACTORY menu loads another factory song (after a confirm), SONG + PLAY plays it', async ({ page }) => {
-  expect(await page.locator('#factory option').count()).toBe(6); // the label + 5 songs
+  expect(await page.locator('#factory option').count()).toBe(7); // the label + 6 songs
   page.once('dialog', d => d.accept());
   await page.selectOption('#factory', '1');
   await expect(page.locator('#lstat')).toHaveText(/FACTORY SONG/);
