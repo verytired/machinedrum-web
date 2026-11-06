@@ -1,11 +1,11 @@
-import { $, numbox } from './dom';
+import { $, numbox, encoder, drawEnc } from './dom';
 import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, defaultState, stepParams, type State, type Pat } from './machines';
 import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
 import { songState } from './demo';
 import { FACTORY } from './songs';
-import { renderWav } from './render';
 import { voice, VOICES } from './voice';
+import { mnm } from './mnm';
 import { stateSyx, parseSyx, applyKit, readPattern, readSong, patName, patKit, kitName, isEmpty, wav, type Dump, type Sample } from './syx';
 import type { HitMsg, SmpMsg } from './dsp/md-processor';
 import procUrl from './dsp/md-processor.ts?worker&url';
@@ -30,9 +30,9 @@ function valid(s: State | undefined): s is State {
   if (!(Array.isArray(s.song) && s.song.length <= 256 && s.song.every(rowOk))) s.song = [];
   return true;
 }
-// First run (nothing saved), or the page opened with ?factory=N (= factory reset to factory song N, 0 by default):
+// First run (nothing saved), or the page opened with ?factory (= factory reset; ?factory=2 = the 3rd factory song):
 // the factory content, as on the MD. A factory song is patterns from A01, the song, its kit and voice samples
-// (press SONG, then PLAY)
+// (press SONG, then PLAY); the FACTORY menu loads another one
 const fq = new URLSearchParams(location.search).get('factory');
 if (fq !== null) history.replaceState(null, '', location.pathname);
 const song0 = FACTORY[Math.max(0, Math.min(FACTORY.length - 1, parseInt(fq ?? '') || 0))]();
@@ -66,16 +66,21 @@ async function ensureAudio() {
     node.connect(out, 0).connect(lim).connect(ctx.destination);
     fx = masterFx(ctx, out);
     node.connect(fx.echoIn, 1); node.connect(fx.gateIn, 2);
+    // the MnM: same worklet shell with its own engine, into the same mixer / limiter / master FX
+    const mn = new AudioWorkletNode(ctx, 'md', { numberOfInputs: 0, numberOfOutputs: 3, outputChannelCount: [2, 2, 2], processorOptions: { wasm: null, mnm: true } });
+    mn.connect(out, 0); mn.connect(fx.echoIn, 1); mn.connect(fx.gateIn, 2);
+    mnm.ctx = ctx; mnm.node = mn;
     applyFx();
     (await restored).forEach((s, tr) => { if (s) setSample(tr, s, false).catch(() => { /* unreadable: stays empty */ }); });
     Object.assign(window, { md: { ctx, out } }); // e2e hook
   })());
   await ctx!.resume();
 }
+mnm.ensure = ensureAudio;
 const hit = (tr: number, t: number, p: number[], s = 0) => node!.port.postMessage({ t, tr, m: st.kit[tr].m, p, s } satisfies HitMsg);
 
 // ---- sequencer (lookahead scheduler, as in AfterBirth's transport.ts) ----
-let playing = false, nextT = 0, step = 0, timer: ReturnType<typeof setInterval> | undefined;
+let playing = false, nextT = 0, step = 0, n16 = 0, timer: ReturnType<typeof setInterval> | undefined;
 // song mode: sp = the song pointer while playing, songRow = where PLAY starts, cue = row picked while playing
 // pattern mode: a pattern picked while playing waits in `queued` for the end of the pattern
 let songMode = false, sp: Pos | null = null, songRow = 0, cue = -1, queued = -1, first = 0, last = 16, mute = 0, newBar = true;
@@ -108,7 +113,8 @@ function tick() {
     if (newBar) { newBar = false; if (!bar(t)) return; step = first; }
     const i = step, ts = t + (i % 2 ? st.swing * 60 / tempo.value / 4 : 0);
     for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) hit(tr, ts, stepParams(st, tr, i), st.lock[tr][i]?.[SLIDE] ? 1 : 0);
-    at(t, () => { pos = i; drawSteps(); });
+    const mi = n16 % 16; mnm.step(n16++, ts, 60 / tempo.value / 4); // the MnM on the MD's clock
+    at(t, () => { pos = i; drawSteps(); mnm.show(mi); });
     nextT += 60 / tempo.value / 4;
     if (++step >= last) newBar = true;
   }
@@ -116,14 +122,14 @@ function tick() {
 $('play').onclick = async () => {
   await ensureAudio();
   if (playing) { if (songMode) $('stop').click(); return; } // song mode: PLAY again pauses
-  playing = true; newBar = true; nextT = ctx!.currentTime + 0.05;
+  playing = true; newBar = true; n16 = 0; nextT = ctx!.currentTime + 0.05;
   timer = setInterval(tick, 25);
   $('play').classList.add('on'); draw();
 };
 // song mode: STOP holds the position, a second STOP goes back to the first row
 $('stop').onclick = () => {
   if (!playing) songRow = 0; else if (sp) songRow = sp.row;
-  node?.port.postMessage({ k: 'flush' }); playing = false; sp = null; cue = queued = -1;
+  node?.port.postMessage({ k: 'flush' }); mnm.flush(); playing = false; sp = null; cue = queued = -1;
   clearInterval(timer); pos = -1; $('play').classList.remove('on'); draw();
 };
 const tempo = numbox($('tempo'), 30, 300, st.tempo, v => { st.tempo = v; save(); applyFx(); });
@@ -149,21 +155,6 @@ function setVal(k: number, v: number) {
 }
 const defVal = (k: number) => page === 0 ? MACHINES[st.kit[cur].m].defs[k] : page < 3 ? defaultState().kit[0].p[idx(k)] : (page === 3 ? defaultFx().echo : defaultFx().gate)[k];
 
-function encoder(el: HTMLElement, get: () => number, set: (v: number) => void, def: () => number) {
-  el.tabIndex = 0; el.setAttribute('role', 'slider');
-  el.onpointerdown = e => {
-    el.setPointerCapture(e.pointerId);
-    const y0 = e.clientY, v0 = get();
-    el.onpointermove = e => set(v0 + (y0 - e.clientY) / 2);
-  };
-  el.onpointerup = el.onpointercancel = () => { el.onpointermove = null; };
-  el.onwheel = e => { e.preventDefault(); set(get() - Math.sign(e.deltaY)); };
-  el.ondblclick = () => set(def());
-  el.onkeydown = e => {
-    const d = ({ ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 } as Record<string, number>)[e.key];
-    if (d) { e.preventDefault(); set(get() + d * (e.shiftKey ? 10 : 1)); }
-  };
-}
 const encs = Array.from({ length: 8 }, (_, k) => {
   const lab = document.createElement('label'), enc = document.createElement('div');
   enc.className = 'enc'; lab.append(enc, document.createElement('b'));
@@ -173,7 +164,6 @@ const encs = Array.from({ length: 8 }, (_, k) => {
 });
 const lev = $('level');
 encoder(lev, () => level, v => { level = Math.max(0, Math.min(127, Math.round(v))); if (out) out.gain.value = level / 127; drawEnc(lev, level); }, () => 100);
-const drawEnc = (el: HTMLElement, v: number) => { el.style.setProperty('--a', (v / 127 * 270 - 135) + 'deg'); el.setAttribute('aria-valuenow', String(v)); };
 
 // ---- machine select / pages / clear ----
 function setMachine(d: number) {
@@ -322,28 +312,19 @@ importer.onchange = async () => {
 };
 $('import').onclick = () => importer.click();
 
-// ---- EXP WAV: the song rendered off line (song mode's rows, the master effects, LEVEL and the limiter) ----
-$('wav').onclick = async () => {
-  if (!st.song.length) { flash('WAV: MAKE A SONG FIRST (SONG MODE)'); return; }
-  msg = 'RENDERING...'; draw(); await new Promise(r => setTimeout(r, 30)); // let the LCD show it before the CPU is busy
-  try {
-    stash(); await restored;
-    const smp = await Promise.all(saved.map((x, tr) => x && st.kit[tr].m === ROM ? pcm(x).then(s => s.d).catch(() => undefined) : undefined));
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(await renderWav(st, smp, level)), download: `machinedrum-${new Date().toISOString().slice(0, 10)}.wav` });
-    a.click(); URL.revokeObjectURL(a.href);
-    flash('WAV EXPORTED');
-  } catch (e) { flash('WAV FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
+// ---- FACTORY: load one of the factory songs (replaces the kit, patterns, song and samples) ----
+const facSel = $('factory') as HTMLSelectElement;
+facSel.replaceChildren(new Option('FACTORY', ''), ...FACTORY.map((f, i) => new Option(f().name, String(i))));
+facSel.onchange = async () => {
+  const i = +facSel.value; facSel.value = '';
+  if (!facSel.options[i + 1] || !confirm(`Load the factory song ${facSel.options[i + 1].text}? The kit, patterns, song and samples are replaced.`)) return;
+  const d = FACTORY[i]();
+  $('stop').click();
+  Object.assign(st, songState(d)); save(); tempo.set(st.tempo); applyFx();
+  await ensureAudio();
+  for (let tr = 0; tr < 16; tr++) { const w = d.voices[TRACKS[tr]]; if (w) await setSample(tr, { name: w, voice: w }); else dropSample(tr); }
+  drawBank(); renderSong(); flash(d.name + ': SONG, THEN PLAY');
 };
-
-// ---- VOICE: a built-in voice on the selected ROM track ----
-const voiceSel = $('voice') as HTMLSelectElement;
-voiceSel.replaceChildren(new Option('VOICE', ''), ...VOICES.map(v => new Option(v, v)));
-voiceSel.onchange = async () => {
-  const v = voiceSel.value; voiceSel.value = '';
-  if (!v) return;
-  await ensureAudio(); await setSample(cur, { name: v, voice: v }); draw();
-};
-
 
 // ---- patterns: A01-H16 menu, COPY / PASTE ----
 const bankSel = $('bank') as HTMLSelectElement;
@@ -456,7 +437,6 @@ function draw() {
   const t = st.kit[cur], labs = labels();
   $('ltrack').textContent = `T${String(cur + 1).padStart(2, '0')}:${TRACKS[cur].padEnd(2)}`;
   $('lmach').textContent = MACHINES[t.m].name + (t.m === ROM ? ':' + (smpName[cur] || 'EMPTY') : '');
-  voiceSel.hidden = t.m !== ROM;
   $('lengine').textContent = engine;
   $('lpat').textContent = slotName(st.pat) + (queued >= 0 ? '>' + slotName(queued) : '');
   bankSel.value = String(st.pat); bankSel.options[st.pat].text = slotName(st.pat) + (st.trig.some(r => r.some(Boolean)) ? ' *' : '');

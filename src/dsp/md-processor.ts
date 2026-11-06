@@ -1,6 +1,7 @@
 // AudioWorklet shell around the MD engine: WASM when it compiles, else the TS twin.
 // Splits each render block at hit boundaries, like AfterBirth's tr606-processor.ts
 import { MdEngine, NPAR, NOUT, MAXS } from './md';
+import { MnmEngine } from './mnm';
 
 export type HitMsg = { t: number; tr: number; m: number; p: number[]; s?: number }; // s: slide
 export type FlushMsg = { k: 'flush' };
@@ -9,8 +10,10 @@ export type SmpMsg = { k: 'smp'; tr: number; d: Float32Array };
 declare const sampleRate: number;
 declare const currentTime: number;
 declare class AudioWorkletProcessor { readonly port: MessagePort; }
-declare function registerProcessor(name: string, ctor: new (options: { processorOptions: { wasm: WebAssembly.Module | null } }) => AudioWorkletProcessor): void;
+declare function registerProcessor(name: string, ctor: new (options: { processorOptions: Opts }) => AudioWorkletProcessor): void;
 
+// mnm: run the Monomachine-style engine instead (TS only, so no wasm)
+type Opts = { wasm: WebAssembly.Module | null; mnm?: boolean };
 interface Engine { trig(tr: number, m: number, p: number[], s: number): void; render(o: Float32Array[], off: number, n: number): void; sample(tr: number, d: Float32Array): void }
 
 function wasmEngine(mod: WebAssembly.Module): Engine {
@@ -31,11 +34,12 @@ class MdProcessor extends AudioWorkletProcessor {
   private engine: Engine;
   private q: HitMsg[] = [];
 
-  constructor({ processorOptions: o }: { processorOptions: { wasm: WebAssembly.Module | null } }) {
+  constructor({ processorOptions: o }: { processorOptions: Opts }) {
     super();
     let name = 'js', e: Engine | undefined;
     try {
-      if (o.wasm) { e = wasmEngine(o.wasm); name = 'wasm'; }
+      if (o.mnm) { e = new MnmEngine(sampleRate); name = 'mnm'; }
+      else if (o.wasm) { e = wasmEngine(o.wasm); name = 'wasm'; }
     } catch (err) {
       this.port.postMessage({ k: 'error', msg: String(err) });
     }
