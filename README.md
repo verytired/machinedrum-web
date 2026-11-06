@@ -1,5 +1,7 @@
 # MD-WEB 16
 
+**Live: https://verytired.github.io/machinedrum-web/**
+
 A 16-track DSP drum machine in the browser, with a Machinedrum-style panel. It is built the same way as AfterBirth (rebirth-web): the DSP is written twice, once in AssemblyScript (`assembly/md.ts`) and once in TypeScript (`src/dsp/md.ts`), and a unit test checks that both render the same samples. It runs in an AudioWorklet and has no runtime dependencies.
 
 ```sh

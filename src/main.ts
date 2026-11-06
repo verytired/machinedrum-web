@@ -44,7 +44,7 @@ const hit = (tr: number, t: number, p: number[]) => node!.port.postMessage({ t, 
 
 // ---- sequencer (lookahead scheduler, as in AfterBirth's transport.ts) ----
 let playing = false, nextT = 0, step = 0, timer: ReturnType<typeof setInterval> | undefined;
-let song: Bar[] | null = null, songBar = 0;
+let song: Bar[] | null = null, songBar = 0, swing = 0; // swing: delay of odd 16ths, in steps (set by the demo)
 function tick() {
   while (nextT < ctx!.currentTime + 0.1) {
     const i = step, t = nextT;
@@ -58,7 +58,8 @@ function tick() {
       const n = songBar;
       setTimeout(() => { if (playing) { songPos = n; draw(); } }, Math.max(0, (t - ctx!.currentTime) * 1000));
     }
-    for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i]) hit(tr, t, stepParams(st, tr, i));
+    const ts = t + (i % 2 ? swing * 60 / tempo.value / 4 : 0);
+    for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i]) hit(tr, ts, stepParams(st, tr, i));
     setTimeout(() => { if (playing) { pos = i; drawSteps(); } }, Math.max(0, (t - ctx!.currentTime) * 1000));
     nextT += 60 / tempo.value / 4;
     step = (step + 1) % 16;
@@ -75,10 +76,10 @@ $('demo').onclick = async () => {
   $('stop').click();
   const d = demoSong();
   tempo.set(d.tempo); // saves; the demo kit/bars below are not saved unless you edit during the demo
-  st.kit = d.kit; st.fx = d.fx; applyFx(); song = d.bars; songBar = 0; songPos = 0;
+  st.kit = d.kit; st.fx = d.fx; applyFx(); song = d.bars; songBar = 0; songPos = 0; swing = d.swing;
   $('play').click();
 };
-$('stop').onclick = () => { node?.port.postMessage({ k: 'flush' }); playing = false; song = null; songPos = 0; clearInterval(timer); pos = -1; $('play').classList.remove('on'); drawSteps(); };
+$('stop').onclick = () => { node?.port.postMessage({ k: 'flush' }); playing = false; song = null; songPos = 0; swing = 0; clearInterval(timer); pos = -1; $('play').classList.remove('on'); drawSteps(); };
 const tempo = numbox($('tempo'), 30, 300, st.tempo, v => { st.tempo = v; save(); applyFx(); });
 
 // ---- encoders ----
