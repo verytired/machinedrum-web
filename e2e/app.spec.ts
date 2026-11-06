@@ -233,12 +233,12 @@ test('RESET FX puts the echo and gate box back to their defaults', async ({ page
   expect(fx).toEqual({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100] });
 });
 
-test('FACTORY menu loads another factory song (after a confirm), SONG + PLAY plays it', async ({ page }) => {
-  expect(await page.locator('#factory option').count()).toBe(7); // the label + 6 songs
-  page.once('dialog', d => d.accept());
-  await page.selectOption('#factory', '1');
-  await expect(page.locator('#lstat')).toHaveText(/FACTORY SONG/);
+test('?factory=N resets to factory song N; SONG + PLAY plays it', async ({ page }) => {
+  await page.goto('./?factory=1');                        // FACTORY SONG
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('#tempo')).toContainText('134');
+  await page.locator('#tracks button').nth(13).click();
+  await expect(page.locator('#lmach')).toHaveText('ROM:YO');
   await page.click('#songkey');
   expect(await page.locator('#song tr').count()).toBeGreaterThan(20);
   await page.click('#play');
@@ -246,16 +246,15 @@ test('FACTORY menu loads another factory song (after a confirm), SONG + PLAY pla
 });
 
 test('EXP WAV renders the song to a 16-bit stereo WAV', async ({ page }) => {
-  page.once('dialog', d => d.accept());
-  await page.selectOption('#factory', '5');               // FACTORY SONG
-  await expect(page.locator('#lstat')).toHaveText(/FACTORY SONG/);
+  await page.goto('./?factory=5');                        // FACTORY SONG
+  await expect(page.locator('#tempo')).toContainText('133');
   const dl = page.waitForEvent('download', { timeout: 120000 });
   await page.click('#wav');
   const b = (await import('fs')).readFileSync(await (await dl).path());
   expect(b.toString('ascii', 0, 4) + b.toString('ascii', 8, 12)).toBe('RIFFWAVE');
   expect([b.readUInt16LE(22), b.readUInt32LE(24), b.readUInt16LE(34)]).toEqual([2, 44100, 16]);
   const secs = b.readUInt32LE(40) / 4 / 44100;
-  expect(secs).toBeGreaterThan(4.4 * 60);                 // the whole song (~4:34) plus a tail
+  expect(secs).toBeGreaterThan(5.2 * 60);                 // the whole song (~5:17) plus a tail
   let pk = 0; for (let i = 44 + 44100 * 4 * 60; i < 44 + 44100 * 4 * 61; i += 2) pk = Math.max(pk, Math.abs(b.readInt16LE(i)));
   expect(pk).toBeGreaterThan(3000);                       // a minute in, it plays
   await expect(page.locator('#lstat')).toHaveText('WAV EXPORTED');
@@ -263,9 +262,7 @@ test('EXP WAV renders the song to a 16-bit stereo WAV', async ({ page }) => {
 
 test('VOICE menu puts a built-in voice on a ROM track (hidden on other machines)', async ({ page }) => {
   await expect(page.locator('#voice')).toBeHidden();      // BD: not a ROM track
-  page.once('dialog', d => d.accept());
-  await page.selectOption('#factory', '0');
-  await expect(page.locator('#lstat')).toHaveText(/FACTORY SONG/);
+  await page.goto('./?factory=0');                        // FACTORY SONG
   await page.locator('#tracks button').nth(13).click();   // M2: ROM, HEY
   await expect(page.locator('#lmach')).toHaveText('ROM:HEY');
   await page.selectOption('#voice', 'JACK');

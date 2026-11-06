@@ -30,9 +30,9 @@ function valid(s: State | undefined): s is State {
   if (!(Array.isArray(s.song) && s.song.length <= 256 && s.song.every(rowOk))) s.song = [];
   return true;
 }
-// First run (nothing saved), or the page opened with ?factory (= factory reset; ?factory=2 = the 3rd factory song):
+// First run (nothing saved), or the page opened with ?factory=N (= factory reset to factory song N, 0 by default):
 // the factory content, as on the MD. A factory song is patterns from A01, the song, its kit and voice samples
-// (press SONG, then PLAY); the FACTORY menu loads another one
+// (press SONG, then PLAY)
 const fq = new URLSearchParams(location.search).get('factory');
 if (fq !== null) history.replaceState(null, '', location.pathname);
 const song0 = FACTORY[Math.max(0, Math.min(FACTORY.length - 1, parseInt(fq ?? '') || 0))]();
@@ -344,19 +344,6 @@ voiceSel.onchange = async () => {
   await ensureAudio(); await setSample(cur, { name: v, voice: v }); draw();
 };
 
-// ---- FACTORY: load one of the factory songs (replaces the kit, patterns, song and samples) ----
-const facSel = $('factory') as HTMLSelectElement;
-facSel.replaceChildren(new Option('FACTORY', ''), ...FACTORY.map((f, i) => new Option(f().name, String(i))));
-facSel.onchange = async () => {
-  const i = +facSel.value; facSel.value = '';
-  if (!facSel.options[i + 1] || !confirm(`Load the factory song ${facSel.options[i + 1].text}? The kit, patterns, song and samples are replaced.`)) return;
-  const d = FACTORY[i]();
-  $('stop').click();
-  Object.assign(st, songState(d)); save(); tempo.set(st.tempo); applyFx();
-  await ensureAudio();
-  for (let tr = 0; tr < 16; tr++) { const w = d.voices[TRACKS[tr]]; if (w) await setSample(tr, { name: w, voice: w }); else dropSample(tr); }
-  drawBank(); renderSong(); flash(d.name + ': SONG, THEN PLAY');
-};
 
 // ---- patterns: A01-H16 menu, COPY / PASTE ----
 const bankSel = $('bank') as HTMLSelectElement;
