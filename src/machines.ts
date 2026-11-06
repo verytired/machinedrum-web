@@ -49,8 +49,10 @@ export function defaultState(): State {
 }
 
 // The kit's params with this step's p-locks on top
+// a lock on SLIDE (beyond the 24 params) marks a slide trig: the note glides from the one before, no retrigger
+export const SLIDE = 24;
 export function stepParams(s: State, tr: number, step: number): number[] {
   const p = s.kit[tr].p.slice(0, NPAR), l = s.lock[tr][step];
-  if (l) for (const k in l) p[+k] = l[k];
+  if (l) for (const k in l) if (+k < NPAR) p[+k] = l[k];
   return p;
 }

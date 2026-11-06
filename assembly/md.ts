@@ -58,6 +58,7 @@ function blep(t: f64, dt: f64): f64 {
 
 class Voice {
   ph: f64 = 0; mph: f64 = 0; f0: f64 = 100; pe: f64 = 0; pk: f64 = 0; pamt: f64 = 0; ie: f64 = 0; ik: f64 = 0; iamt: f64 = 0; ratio: f64 = 1;
+  sl: bool = false; ft: f64 = 100; gc: f64 = 0; // slide: see src/dsp/md.ts
   toneE: Env; noiseE: Env; metalE: Env;
   noiseF: Svf; metalF: Svf;
   mph6: StaticArray<f64> = new StaticArray<f64>(6); mdt: StaticArray<f64> = new StaticArray<f64>(6);
@@ -68,22 +69,24 @@ class Voice {
 
   constructor(fs: f64) {
     this.fs = fs;
-    this.toneE = new Env(fs); this.noiseE = new Env(fs); this.metalE = new Env(fs); this.smpE = new Env(fs);
+    this.toneE = new Env(fs); this.noiseE = new Env(fs); this.metalE = new Env(fs); this.smpE = new Env(fs); this.gc = coef(fs, 0.06);
     this.noiseF = new Svf(fs); this.metalF = new Svf(fs);
     this.eq = new Peq(fs); this.hp = new Svf(fs); this.lp = new Svf(fs);
   }
 
-  tone(f0: f64, peak: f64, dec: f64): void { this.f0 = f0; this.toneE.trig(peak, dec); this.ph = 0; this.mph = 0; }
-  sweep(amt: f64, dec: f64): void { this.pamt = amt; this.pe = 1; this.pk = coef(this.fs, dec); }
-  fm(amt: f64, ratio: f64, dec: f64): void { this.iamt = amt; this.ratio = ratio; this.ie = 1; this.ik = coef(this.fs, dec); }
+  tone(f0: f64, peak: f64, dec: f64): void { this.ft = f0; if (this.sl) return; this.f0 = f0; this.toneE.trig(peak, dec); this.ph = 0; this.mph = 0; }
+  sweep(amt: f64, dec: f64): void { if (this.sl) return; this.pamt = amt; this.pe = 1; this.pk = coef(this.fs, dec); }
+  fm(amt: f64, ratio: f64, dec: f64): void { if (this.sl) return; this.iamt = amt; this.ratio = ratio; this.ie = 1; this.ik = coef(this.fs, dec); }
   noise(peak: f64, dec: f64, f: f64, q: f64, mode: i32): void { this.noiseE.trig(peak, dec); this.noiseF.set(f, q, mode); }
   metal(peak: f64, dec: f64, tune: f64, hpf: f64): void {
     this.metalE.trig(peak, dec); this.metalF.set(hpf, 1, HP);
     for (let j = 0; j < 6; j++) this.mdt[j] = METAL[j] * tune / this.fs;
   }
 
-  trig(m: i32, p: StaticArray<f64>): void {
-    this.pamt = 0; this.iamt = 0; this.son = 0;
+  trig(m: i32, p: StaticArray<f64>, slide: i32): void {
+    this.sl = slide > 0 && this.toneE.h > 1e-4;
+    if (!this.sl) { this.pamt = 0; this.iamt = 0; }
+    this.son = 0;
     if (m == 0) { this.tone(ex(p[0], 20, 2000), 1, ex(p[1], 0.01, 4)); this.sweep(p[2] / 127 * 8, ex(p[3], 0.005, 1)); }
     else if (m == 1) this.noise(1, ex(p[0], 0.01, 4), 18000, 0.7, LP);
     else if (m == 2) this.imp = 1;
@@ -128,6 +131,7 @@ class Voice {
 
   tick(nz: f64): f64 {
     const fs = this.fs;
+    this.f0 = this.ft + (this.f0 - this.ft) * this.gc;
     const f = this.f0 * (1 + this.pamt * this.pe); this.pe *= this.pk;
     const tone = Math.sin(TAU * this.ph + this.iamt * this.ie * Math.sin(TAU * this.mph)); this.ie *= this.ik;
     this.ph += f / fs; if (this.ph >= 1) this.ph -= 1;
@@ -175,7 +179,7 @@ let seed: u32 = 0x12345678;
 export function init(fs: f64): void { for (let i = 0; i < 16; i++) vs.push(new Voice(fs)); }
 export function outPtr(): usize { return changetype<usize>(out); }
 export function parPtr(): usize { return changetype<usize>(par); }
-export function trig(tr: i32, m: i32): void { unchecked(vs[tr]).trig(m, par); }
+export function trig(tr: i32, m: i32, slide: i32): void { unchecked(vs[tr]).trig(m, par, slide); }
 // ROM sample: JS writes up to MAXS floats at smpPtr(tr), then calls smpLen(tr, n)
 export function smpPtr(tr: i32): usize { return changetype<usize>(unchecked(vs[tr]).smp); }
 export function smpLen(tr: i32, n: i32): void { const v = unchecked(vs[tr]); v.slen = min(n, MAXS); v.son = 0; }

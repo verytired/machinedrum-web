@@ -1,8 +1,9 @@
 import { $, numbox } from './dom';
 import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
-import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, defaultState, stepParams, type State, type Pat } from './machines';
+import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, defaultState, stepParams, type State, type Pat } from './machines';
 import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
-import { demoSong, demoState } from './demo';
+import { songState } from './demo';
+import { FACTORY } from './songs';
 import { voice, VOICES } from './voice';
 import { stateSyx, parseSyx, applyKit, readPattern, readSong, patName, patKit, kitName, isEmpty, wav, type Dump, type Sample } from './syx';
 import type { HitMsg, SmpMsg } from './dsp/md-processor';
@@ -28,15 +29,17 @@ function valid(s: State | undefined): s is State {
   if (!(Array.isArray(s.song) && s.song.length <= 256 && s.song.every(rowOk))) s.song = [];
   return true;
 }
-// First run (nothing saved), or the page opened with ?factory (= factory reset): the factory content, as on the MD.
-// It is the demo song: patterns from A01, the song, its kit and voice samples (press SONG, then PLAY)
-const factory = new URLSearchParams(location.search).has('factory');
-if (factory) history.replaceState(null, '', location.pathname);
+// First run (nothing saved), or the page opened with ?factory (= factory reset; ?factory=2 = the 3rd factory song):
+// the factory content, as on the MD. A factory song is patterns from A01, the song, its kit and voice samples
+// (press SONG, then PLAY); the FACTORY menu loads another one
+const fq = new URLSearchParams(location.search).get('factory');
+if (fq !== null) history.replaceState(null, '', location.pathname);
+const song0 = FACTORY[Math.max(0, Math.min(FACTORY.length - 1, parseInt(fq ?? '') || 0))]();
 let fresh = false;
 function load(): State {
-  if (!factory) try { const s = JSON.parse(localStorage.getItem(KEY) ?? ''); if (valid(s)) return s; } catch { /* first run */ }
+  if (fq === null) try { const s = JSON.parse(localStorage.getItem(KEY) ?? ''); if (valid(s)) return s; } catch { /* first run */ }
   fresh = true;
-  return demoState();
+  return songState(song0);
 }
 const st = load();
 const stash = () => { st.pats[st.pat] = { trig: st.trig, lock: st.lock }; };
@@ -68,7 +71,7 @@ async function ensureAudio() {
   })());
   await ctx!.resume();
 }
-const hit = (tr: number, t: number, p: number[]) => node!.port.postMessage({ t, tr, m: st.kit[tr].m, p } satisfies HitMsg);
+const hit = (tr: number, t: number, p: number[], s = 0) => node!.port.postMessage({ t, tr, m: st.kit[tr].m, p, s } satisfies HitMsg);
 
 // ---- sequencer (lookahead scheduler, as in AfterBirth's transport.ts) ----
 let playing = false, nextT = 0, step = 0, timer: ReturnType<typeof setInterval> | undefined;
@@ -103,7 +106,7 @@ function tick() {
     const t = nextT;
     if (newBar) { newBar = false; if (!bar(t)) return; step = first; }
     const i = step, ts = t + (i % 2 ? st.swing * 60 / tempo.value / 4 : 0);
-    for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) hit(tr, ts, stepParams(st, tr, i));
+    for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) hit(tr, ts, stepParams(st, tr, i), st.lock[tr][i]?.[SLIDE] ? 1 : 0);
     at(t, () => { pos = i; drawSteps(); });
     nextT += 60 / tempo.value / 4;
     if (++step >= last) newBar = true;
@@ -199,8 +202,8 @@ const idb = <T,>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest<
   const q = f(d.transaction('smp', mode).objectStore('smp')); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
 }));
 // what was saved last time: names show right away, audio is decoded once the AudioContext exists
-// factory content: its ROM tracks get the demo voices, the other tracks' samples are dropped
-const voices: Record<string, string> = demoSong().voices;
+// factory content: its ROM tracks get the song's voices, the other tracks' samples are dropped
+const voices: Record<string, string> = song0.voices;
 const restored = Promise.all(TRACKS.map((n, tr) => !fresh ? idb<Saved | undefined>('readonly', s => s.get(tr)).catch(() => undefined)
   : (voices[n] ? idb('readwrite', o => o.put({ name: voices[n], voice: voices[n] }, tr)) : idb('readwrite', o => o.delete(tr))).catch(() => {}).then(() => voices[n] ? { name: voices[n], voice: voices[n] } : undefined)))
   .then(all => { all.forEach((s, tr) => { if (s) { smpName[tr] = s.name; saved[tr] = s; } }); draw(); return all; });
@@ -216,6 +219,10 @@ async function setSample(tr: number, s: Saved, persist = true) {
     for (let c = 0; c < ab.numberOfChannels; c++) ab.getChannelData(c).forEach((v, i) => d[i] += v / ab.numberOfChannels);
   }
   node!.port.postMessage({ k: 'smp', tr, d } satisfies SmpMsg, [d.buffer]);
+}
+function dropSample(tr: number) {
+  smpName[tr] = ''; saved[tr] = undefined; idb('readwrite', s => s.delete(tr)).catch(() => {});
+  node?.port.postMessage({ k: 'smp', tr, d: new Float32Array(0) } satisfies SmpMsg);
 }
 async function loadSample(tr: number, f: File) {
   await ensureAudio();
@@ -302,7 +309,7 @@ importer.onchange = async () => {
     $('stop').click();
     Object.assign(st, b.st); save(); tempo.set(st.tempo); applyFx();
     await ensureAudio();
-    for (let tr = 0; tr < 16; tr++) { smpName[tr] = ''; saved[tr] = undefined; idb('readwrite', s => s.delete(tr)).catch(() => {}); node!.port.postMessage({ k: 'smp', tr, d: new Float32Array(0) } satisfies SmpMsg); }
+    for (let tr = 0; tr < 16; tr++) dropSample(tr);
     for (const x of b.samples) {
       if (!Number.isInteger(x?.tr) || x.tr < 0 || x.tr > 15 || typeof x.name !== 'string') continue;
       const file = typeof x.file === 'string' ? await (await fetch('data:application/octet-stream;base64,' + x.file)).arrayBuffer() : undefined;
@@ -313,6 +320,20 @@ importer.onchange = async () => {
   } catch (e) { flash('IMPORT FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
 };
 $('import').onclick = () => importer.click();
+
+// ---- FACTORY: load one of the factory songs (replaces the kit, patterns, song and samples) ----
+const facSel = $('factory') as HTMLSelectElement;
+facSel.replaceChildren(new Option('FACTORY', ''), ...FACTORY.map((f, i) => new Option(f().name, String(i))));
+facSel.onchange = async () => {
+  const i = +facSel.value; facSel.value = '';
+  if (!facSel.options[i + 1] || !confirm(`Load the factory song ${facSel.options[i + 1].text}? The kit, patterns, song and samples are replaced.`)) return;
+  const d = FACTORY[i]();
+  $('stop').click();
+  Object.assign(st, songState(d)); save(); tempo.set(st.tempo); applyFx();
+  await ensureAudio();
+  for (let tr = 0; tr < 16; tr++) { const w = d.voices[TRACKS[tr]]; if (w) await setSample(tr, { name: w, voice: w }); else dropSample(tr); }
+  drawBank(); renderSong(); flash(d.name + ': SONG, THEN PLAY');
+};
 
 // ---- patterns: A01-H16 menu, COPY / PASTE ----
 const bankSel = $('bank') as HTMLSelectElement;

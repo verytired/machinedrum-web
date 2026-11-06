@@ -2,7 +2,7 @@
 // samples, byte layout as in waftlord/mddt
 // (Apache-2.0), which is tested against the hardware. Track params 0-23 are the MD's own order, so they copy 1:1.
 // Not carried: LFO settings, accent / slide, per-step swing, track levels. Tempo goes in the song's first row.
-import { trackFor, type State, type Pat } from './machines';
+import { trackFor, SLIDE, type State, type Pat } from './machines';
 import { isPat, type Row } from './song';
 
 const HDR = [0xf0, 0x00, 0x20, 0x3c, 0x02, 0x00];
@@ -69,7 +69,7 @@ export function patternSyx(p: Pat, swing = 0, pos = 0): Uint8Array<ArrayBuffer> 
     ...enc7([0, 0, 0xaaaaaaaa, Math.round(swing * 16384)].flatMap(be32)),             // accent / slide masks, swing on odd steps, amount
     0, 16, 0, 0, 0, rows.length,                                                     // accent amount, length, tempo x1, scale, kit 1, lock rows
     ...enc7(mat.map(v => Math.round(v))),
-    ...enc7(Array(204).fill(0)),                                                     // per-track accent / slide / swing
+    ...enc7([0, 0, 0, ...Array(16).fill(0), ...p.lock.map(r => r.reduce((m, l, i) => l?.[SLIDE] ? m | 1 << i : m, 0) >>> 0), ...Array(16).fill(0)].flatMap(be32)), // per-track accent / slide / swing
   ];
   return wrap(PAT, 3, 1, b, PAT_LEN, pos);
 }
@@ -170,7 +170,8 @@ export function applyKit(d: Uint8Array, st: State): number[] {
 // A pattern dump as one of our patterns (first 16 steps of a 32 / 64-step pattern) plus its swing;
 // lock rows follow the lock masks in (track, param) order
 export function readPattern(d: Uint8Array): Pat & { swing: number } {
-  const trig = dec7(d, 0x0a, 64), mask = dec7(d, 0x54, 64), acc = dec7(d, 0x9e, 16), mat = dec7(d, 0xb7, 2048);
+  // ponytail: per-track slide masks only; the pattern-wide slide mask is not read (its meaning on the MD is not pinned down)
+  const trig = dec7(d, 0x0a, 64), mask = dec7(d, 0x54, 64), acc = dec7(d, 0x9e, 16), mat = dec7(d, 0xb7, 2048), extra = dec7(d, 0x9dc, 204);
   const p: Pat = { trig: [], lock: [] };
   let row = 0;
   for (let tr = 0; tr < 16; tr++) {
@@ -181,6 +182,8 @@ export function readPattern(d: Uint8Array): Pat & { swing: number } {
       for (let s = 0; s < 16; s++) { const v = mat[row * 32 + s]; if (v <= 127) p.lock[tr][s] = { ...p.lock[tr][s], [k]: v }; }
       row++;
     }
+    const sm = rd32(extra, 76 + tr * 4);
+    for (let s = 0; s < 16; s++) if (sm >>> s & 1 && p.trig[tr][s]) p.lock[tr][s] = { ...p.lock[tr][s], [SLIDE]: 1 };
   }
   const sw = rd32(acc, 12);
   return { ...p, swing: rd32(acc, 8) && sw <= 16384 ? Math.min(0.6, sw / 16384) : 0 };

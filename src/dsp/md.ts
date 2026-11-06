@@ -66,6 +66,8 @@ function blep(t: number, dt: number): number {
 class Voice {
   // tone
   ph = 0; mph = 0; f0 = 100; pe = 0; pk = 0; pamt = 0; ie = 0; ik = 0; iamt = 0; ratio = 1;
+  // slide (as on a 303 / the MD's slide trigs): the pitch glides from f0 to ft, the envelopes and FM keep going
+  sl = false; ft = 100; gc: number;
   toneE: Env; noiseE: Env; metalE: Env;
   noiseF: Svf; metalF: Svf;
   mph6 = [0, 0, 0, 0, 0, 0]; mdt = [0, 0, 0, 0, 0, 0];
@@ -76,22 +78,24 @@ class Voice {
   amd = 0; amf = 1; amph = 0; eq: Peq; hp: Svf; lp: Svf; sk = 1; sc = 0; sh = 0; dg = 0; gl = 0; gr = 0; dl = 0; dr = 0; rl = 0; rr = 0; // dl..rr: post-fader sends to echo / gate box
 
   constructor(private fs: number) {
-    this.toneE = new Env(fs); this.noiseE = new Env(fs); this.metalE = new Env(fs); this.smpE = new Env(fs);
+    this.toneE = new Env(fs); this.noiseE = new Env(fs); this.metalE = new Env(fs); this.smpE = new Env(fs); this.gc = coef(fs, 0.06);
     this.noiseF = new Svf(fs); this.metalF = new Svf(fs);
     this.eq = new Peq(fs); this.hp = new Svf(fs); this.lp = new Svf(fs);
   }
 
-  tone(f0: number, peak: number, dec: number) { this.f0 = f0; this.toneE.trig(peak, dec); this.ph = 0; this.mph = 0; }
-  sweep(amt: number, dec: number) { this.pamt = amt; this.pe = 1; this.pk = coef(this.fs, dec); }
-  fm(amt: number, ratio: number, dec: number) { this.iamt = amt; this.ratio = ratio; this.ie = 1; this.ik = coef(this.fs, dec); }
+  tone(f0: number, peak: number, dec: number) { this.ft = f0; if (this.sl) return; this.f0 = f0; this.toneE.trig(peak, dec); this.ph = 0; this.mph = 0; }
+  sweep(amt: number, dec: number) { if (this.sl) return; this.pamt = amt; this.pe = 1; this.pk = coef(this.fs, dec); }
+  fm(amt: number, ratio: number, dec: number) { if (this.sl) return; this.iamt = amt; this.ratio = ratio; this.ie = 1; this.ik = coef(this.fs, dec); }
   noise(peak: number, dec: number, f: number, q: number, mode: number) { this.noiseE.trig(peak, dec); this.noiseF.set(f, q, mode); }
   metal(peak: number, dec: number, tune: number, hpf: number) {
     this.metalE.trig(peak, dec); this.metalF.set(hpf, 1, HP);
     for (let j = 0; j < 6; j++) this.mdt[j] = METAL[j] * tune / this.fs;
   }
 
-  trig(m: number, p: ArrayLike<number>) {
-    this.pamt = 0; this.iamt = 0; this.son = 0;
+  trig(m: number, p: ArrayLike<number>, slide = 0) {
+    this.sl = slide > 0 && this.toneE.h > 1e-4; // only a sounding note glides
+    if (!this.sl) { this.pamt = 0; this.iamt = 0; }
+    this.son = 0;
     if (m == 0) { this.tone(ex(p[0], 20, 2000), 1, ex(p[1], 0.01, 4)); this.sweep(p[2] / 127 * 8, ex(p[3], 0.005, 1)); } // GND-SN
     else if (m == 1) this.noise(1, ex(p[0], 0.01, 4), 18000, 0.7, LP); // GND-NS
     else if (m == 2) this.imp = 1; // GND-IM
@@ -136,6 +140,7 @@ class Voice {
 
   tick(nz: number): number {
     const fs = this.fs;
+    this.f0 = this.ft + (this.f0 - this.ft) * this.gc;
     const f = this.f0 * (1 + this.pamt * this.pe); this.pe *= this.pk;
     const tone = Math.sin(TAU * this.ph + this.iamt * this.ie * Math.sin(TAU * this.mph)); this.ie *= this.ik;
     this.ph += f / fs; if (this.ph >= 1) this.ph -= 1;
@@ -179,7 +184,7 @@ export class MdEngine {
   private vs: Voice[] = [];
   private seed = 0x12345678;
   constructor(fs: number) { for (let i = 0; i < 16; i++) this.vs.push(new Voice(fs)); }
-  trig(tr: number, m: number, p: ArrayLike<number>) { this.vs[tr].trig(m, p); }
+  trig(tr: number, m: number, p: ArrayLike<number>, slide = 0) { this.vs[tr].trig(m, p, slide); }
   // load a mono sample (at the engine rate) into a track for the ROM machine
   sample(tr: number, d: Float32Array) { const v = this.vs[tr]; v.slen = Math.min(d.length, MAXS); v.smp = d.slice(0, v.slen); v.son = 0; }
   // o: dry L/R, echo send L/R, gate box send L/R
