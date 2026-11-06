@@ -2,6 +2,7 @@ import { $, numbox } from './dom';
 import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, defaultState, stepParams, type State } from './machines';
 import { demoSong, applyBar, BARS as demoBars, type Bar } from './demo';
+import { voice } from './voice';
 import type { HitMsg, SmpMsg } from './dsp/md-processor';
 import procUrl from './dsp/md-processor.ts?worker&url';
 import wasmUrl from './dsp/md.wasm?url';
@@ -75,6 +76,11 @@ $('play').onclick = async () => {
 $('demo').onclick = async () => {
   $('stop').click();
   const d = demoSong();
+  await ensureAudio();
+  for (const [tr, w] of Object.entries(d.voices)) { // the demo's ROM tracks get the built-in voice samples
+    const i = TRACKS.indexOf(tr), v = voice(w, ctx!.sampleRate);
+    node!.port.postMessage({ k: 'smp', tr: i, d: v } satisfies SmpMsg, [v.buffer]); smpName[i] = w;
+  }
   tempo.set(d.tempo); // saves; the demo kit/bars below are not saved unless you edit during the demo
   st.kit = d.kit; st.fx = d.fx; applyFx(); song = d.bars; songBar = 0; songPos = 0; swing = d.swing;
   $('play').click();

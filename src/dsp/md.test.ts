@@ -4,6 +4,8 @@ import { MdEngine, NPAR, NOUT, VOL, FLTW, DIST, SRR, AMD, DEL, REV } from './md'
 import { MACHINES, trackFor, defaultState, stepParams } from '../machines';
 import { demoSong, applyBar } from '../demo';
 import { gateIR } from '../fx';
+import { voice, VOICES } from '../voice';
+import { TRACKS } from '../machines';
 
 const SR = 48000;
 // test sample for the ROM machine: 0.3 s of a decaying 220 Hz sine with some 2nd harmonic
@@ -95,7 +97,9 @@ describe('demo song', () => {
       for (let i = 0; i < 16; i++) for (let tr = 0; tr < 16; tr++)
         if (st.trig[tr][i]) hits.push([(bi * 16 + i) * step, tr, st.kit[tr].m, stepParams(st, tr, i)]);
     });
-    const [l, r] = drive(js(), hits, (d.bars.length * 16 + 8) * step);
+    const e = js();
+    for (const [tr, w] of Object.entries(d.voices)) e.sample(TRACKS.indexOf(tr), voice(w, SR, () => 0.5));
+    const [l, r] = drive(e, hits, (d.bars.length * 16 + 8) * step);
     const pk = Math.max(peak(l), peak(r));
     expect(Number.isFinite(pk)).toBe(true);
     expect(pk).toBeGreaterThan(0.2);
@@ -111,6 +115,17 @@ describe('gate box', () => {
       const end = Math.round(a / 127 * 0.1 * SR) + Math.round(h / 127 * 0.5 * SR);
       expect(peak(l, 0, end + 1)).toBeGreaterThan(0);
       expect(l[l.length - 1]).toBe(0);
+    }
+  });
+});
+
+describe('voice samples', () => {
+  it('every word is finite, audible and normalized', () => {
+    for (const w of VOICES) {
+      const v = voice(w, SR, () => 0.5);
+      expect(v.every(Number.isFinite)).toBe(true);
+      expect(peak(v)).toBeCloseTo(0.8, 5);
+      expect(v.length).toBeGreaterThan(SR * 0.3);
     }
   });
 });
