@@ -132,3 +132,16 @@ test('EXP SYX then IMPORT of the .syx brings back the pattern', async ({ page })
   await expect(page.locator('#lstat')).toHaveText(/A01 MD-WEB/);
   expect(await page.locator('#trigs button').nth(3).getAttribute('class')).toBe(on);
 });
+
+test('IMPORT of a .syx during the DEMO stops the demo', async ({ page }) => {
+  const dl = page.waitForEvent('download');
+  await page.click('#syx');
+  const file = await (await dl).path();
+  await page.click('#demo');
+  await expect(page.locator('#play')).toHaveClass(/on/);
+  const ic = page.waitForEvent('filechooser');
+  await page.click('#import');
+  await (await ic).setFiles(file);
+  await expect(page.locator('#lstat')).toHaveText(/A01 MD-WEB/);
+  await expect(page.locator('#play')).not.toHaveClass(/on/);
+});

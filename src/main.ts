@@ -222,6 +222,7 @@ let dump: Dump = { kits: [], pats: [], samples: [] };
 const patSel = $('pat') as HTMLSelectElement;
 async function usePattern(i: number) {
   const p = dump.pats[i], k = p ? dump.kits.find(k => k[9] === patKit(p)) ?? dump.kits[0] : dump.kits[0];
+  if (song) $('stop').click(); // the demo would keep playing its bars on the imported kit
   const s = structuredClone(st);
   if (p) applyPattern(p, s);
   const slots = k ? applyKit(k, s) : [];
