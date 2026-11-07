@@ -1,7 +1,7 @@
 import { $, numbox, encoder, drawEnc } from './dom';
 import { masterFx, defaultFx, dynOf, dynVals, seeded, ECHO_LABELS, GATE_LABELS, DYN_LABELS } from './fx';
-import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, micro, defaultState, stepParams, type State, type Pat } from './machines';
-import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
+import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, micro, defaultState, stepParams, applyAuto, type State, type Pat } from './machines';
+import { enter, next, barAt, isPat, slotName, type Pos, type PatRow, type Row } from './song';
 import { songState } from './bars';
 import { FACTORY } from './presets';
 import { renderWav } from './render';
@@ -29,6 +29,7 @@ function valid(s: State | undefined): s is State {
   if (!int(s.pat, 0, 127)) s.pat = 0;
   if (!(Number.isFinite(s.swing) && s.swing >= 0 && s.swing <= 0.6)) s.swing = 0;
   if (!(Array.isArray(s.song) && s.song.length <= 256 && s.song.every(rowOk))) s.song = [];
+  if (!(Array.isArray(s.auto) && s.auto.every(a => int(a?.tr, 0, 21) && int(a.par, 0, 33) && Array.isArray(a.pts) && a.pts.every(q => Array.isArray(q) && q.length === 2 && q.every(Number.isFinite))))) delete s.auto;
   return true;
 }
 // First run (nothing saved), or the page opened with ?factory=N (= factory reset to factory song N, 0 by default):
@@ -94,6 +95,7 @@ const hit = (tr: number, t: number, p: number[], s = 0) => {
 let playing = false, nextT = 0, step = 0, n16 = 0, timer: ReturnType<typeof setInterval> | undefined;
 // song mode: sp = the song pointer while playing, songRow = where PLAY starts, cue = row picked while playing
 // pattern mode: a pattern picked while playing waits in `queued` for the end of the pattern
+let songBar = 0; // the playing bar on the song's timeline (song automation)
 let songMode = false, sp: Pos | null = null, songRow = 0, cue = -1, queued = -1, first = 0, last = 16, mute = 0, newBar = true;
 const at = (t: number, f: () => void) => setTimeout(() => { if (playing) f(); }, Math.max(0, (t - ctx!.currentTime) * 1000));
 const finish = (t: number) => { clearInterval(timer); setTimeout(() => $('stop').click(), (t - ctx!.currentTime) * 1000 + 1500); }; // let the tails ring out
@@ -111,7 +113,7 @@ function bar(t: number): boolean {
     cue = -1;
     if (!n || 'halt' in n) { songRow = n ? n.halt : 0; sp = null; at(t, draw); finish(t); return false; } // END / HALT
     const r = st.song[n.row] as PatRow;
-    sp = n; songRow = n.row;
+    sp = n; songRow = n.row; songBar = barAt(st.song, n);
     if (st.pat !== r.pat) usePat(r.pat);
     if (r.bpm && r.bpm !== tempo.value) tempo.set(r.bpm);
     first = r.of; last = r.len; mute = r.mute;
@@ -124,8 +126,13 @@ function tick() {
     const t = nextT;
     if (newBar) { newBar = false; if (!bar(t)) return; step = first; }
     const i = step, ts = t + (i % 2 ? st.swing * 60 / tempo.value / 4 : 0);
-    for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) hit(tr, ts + micro(st.lock[tr][i]) * 60 / tempo.value / 4, stepParams(st, tr, i), st.lock[tr][i]?.[SLIDE] ? 1 : 0);
-    const mi = n16 % 16; mnm.step(n16++, ts, 60 / tempo.value / 4); // the MnM on the MD's clock
+    const at16 = songBar + i / 16, auto = songMode ? st.auto : undefined;
+    for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) {
+      const p = stepParams(st, tr, i);
+      applyAuto(auto, tr, at16, p, st.lock[tr][i]);
+      hit(tr, ts + micro(st.lock[tr][i]) * 60 / tempo.value / 4, p, st.lock[tr][i]?.[SLIDE] ? 1 : 0);
+    }
+    const mi = n16 % 16; mnm.step(n16++, ts, 60 / tempo.value / 4, auto && ((tr, p, l) => applyAuto(auto, 16 + tr, at16, p, l))); // the MnM on the MD's clock
     at(t, () => { pos = i; drawSteps(); mnm.show(mi); });
     nextT += 60 / tempo.value / 4;
     if (++step >= last) newBar = true;

@@ -34,7 +34,23 @@ export interface Track { m: number; p: number[] }
 export interface Pat { trig: boolean[][]; lock: (Record<number, number> | null | undefined)[][] }
 // trig / lock: the pattern being played and edited (pats[pat] is synced to it on save); pats: A01-H16, null = never used
 // swing: delay of the odd 16ths, in steps (0-0.6)
-export interface State extends Pat { kit: Track[]; tempo: number; swing: number; fx: Fx; pats: (Pat | null)[]; pat: number; song: Row[] }
+// auto: song automation lanes (below)
+export interface State extends Pat { kit: Track[]; tempo: number; swing: number; fx: Fx; pats: (Pat | null)[]; pat: number; song: Row[]; auto?: Lane[] }
+
+// Song automation (not on the MD): a lane moves one param of one track along the song's timeline (song.ts barAt), in
+// bars: [bar, value] points (a bar can be fractional, 16ths = 1/16), linear in between, held before the first and
+// after the last. tr 0-15 = the MD tracks, 16-21 = the MNM's. It replaces the kit value at each hit, a p-lock on the
+// step still wins. Song mode and EXP WAV only; not in a .syx.
+// ponytail: params latch at the hit, so a long note doesn't sweep inside itself; per-block updates if pads need it
+export interface Lane { tr: number; par: number; pts: [bar: number, v: number][] }
+export function laneAt(pts: [number, number][], pos: number): number {
+  if (pos <= pts[0][0]) return pts[0][1];
+  for (let k = 1; k < pts.length; k++) if (pos < pts[k][0]) { const [a, va] = pts[k - 1], [b, vb] = pts[k]; return va + (vb - va) * (pos - a) / (b - a); }
+  return pts[pts.length - 1][1];
+}
+export function applyAuto(auto: Lane[] | undefined, tr: number, pos: number, p: number[], lock?: Record<number, number> | null) {
+  if (auto) for (const a of auto) if (a.tr === tr && a.pts.length && lock?.[a.par] === undefined) p[a.par] = Math.max(0, Math.min(127, Math.round(laneAt(a.pts, pos))));
+}
 
 export const trackFor = (m: number): Track => ({ m, p: MACHINES[m].defs.concat(TRACK_DEFS) });
 

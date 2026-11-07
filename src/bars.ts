@@ -1,7 +1,7 @@
 // Building blocks for songs made of bars: track names, note -> PTCH, bar / lock / hit / note helpers, the Song type,
 // songState() (a song -> patterns + a song-mode song) and applyBar(). The factory songs themselves live in
 // src/factory/ (not in the public repo).
-import { TRACKS, SLIDE, MICRO, defaultState, type Track, type State } from './machines';
+import { TRACKS, SLIDE, MICRO, defaultState, type Track, type State, type Lane } from './machines';
 import type { Fx } from './fx';
 import { isPat } from './song';
 import type { MPat, MTrack } from './mnm';
@@ -43,11 +43,11 @@ export const notes = (b: Bar, tr: string, line: string, lo: number, hi: number, 
 
 // A song as song-mode data: each different bar is a pattern (A01 up), runs of the same bar are one row with REP
 // mnm: the MNM synth's kit and its part for each bar (it follows the MD's pattern slots)
-export interface Song { name: string; tempo: number; swing: number; kit: Track[]; fx: Fx; bars: Bar[]; voices: Record<string, string>; mnm?: { kit: MTrack[]; bars: MPat[] } }
+export interface Song { name: string; tempo: number; swing: number; kit: Track[]; fx: Fx; bars: Bar[]; voices: Record<string, string>; mnm?: { kit: MTrack[]; bars: MPat[] }; auto?: Lane[] }
 export function songState(d: Song): State & { mnm?: { kit: MTrack[]; pats: (MPat | null)[] } } {
   const st: State & { mnm?: { kit: MTrack[]; pats: (MPat | null)[] } } = defaultState(), keys: string[] = [];
   if (d.mnm) st.mnm = { kit: d.mnm.kit, pats: Array(128).fill(null) };
-  Object.assign(st, { kit: d.kit, fx: d.fx, tempo: d.tempo, swing: d.swing });
+  Object.assign(st, { kit: d.kit, fx: d.fx, tempo: d.tempo, swing: d.swing, auto: d.auto });
   d.bars.forEach((b, bi) => {
     const mb = d.mnm?.bars[bi], k = JSON.stringify([b, mb]);
     let n = keys.indexOf(k);

@@ -57,7 +57,7 @@ test.skipIf(!FACTORY.length)('a factory song as .syx (kit, patterns, song, voice
   for (const p of d.pats) { const { trig, lock, swing } = readPattern(p); back.pats[p[9]] = { trig, lock }; back.swing = swing; }
   back.song = readSong(d.songs[0]);
   expect(back.kit).toEqual(st.kit);
-  expect(back.fx).toEqual(st.fx);
+  expect([back.fx.echo, back.fx.gate]).toEqual([st.fx.echo, st.fx.gate]); // DYNAMIX isn't in a .syx
   expect(back.pats).toEqual(st.pats);
   expect(back.song).toEqual(st.song);
   expect(back.swing).toBeCloseTo(0.2, 4);

@@ -163,7 +163,7 @@ export function applyKit(d: Uint8Array, st: State): number[] {
     slots.push(romSlot(id));
   }
   const r = d.subarray(0x487), e = d.subarray(0x48f);
-  st.fx = { echo: [e[0], e[3], e[4], e[5], 0, 0, 0, e[7]], gate: [r[1], r[3], r[2], r[4], r[5], 0, 0, r[7]] };
+  st.fx = { ...st.fx, echo: [e[0], e[3], e[4], e[5], 0, 0, 0, e[7]], gate: [r[1], r[3], r[2], r[4], r[5], 0, 0, r[7]] }; // DYNAMIX isn't in a .syx: keep it
   return slots;
 }
 

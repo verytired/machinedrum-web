@@ -8,8 +8,8 @@ import { MnmEngine, GATE, LEN } from './dsp/mnm';
 import type { MState } from './mnm';
 import { masterFx, dynVals } from './fx';
 import { Limiter, Meter, type Report } from './master';
-import { stepParams, SLIDE, micro, TRACKS, type State } from './machines';
-import { enter, next, type PatRow } from './song';
+import { stepParams, applyAuto, SLIDE, micro, TRACKS, type State } from './machines';
+import { enter, next, barAt, type PatRow } from './song';
 
 export const SR = 44100;
 type Hit = { f: number; tr: number; m: number; p: number[]; s: number };
@@ -25,14 +25,19 @@ export function songHits(st: State, mnm?: MState): { hits: Hit[]; mhits: Hit[]; 
     if (r.bpm) bpm = r.bpm;
     const step = 60 / bpm / 4;
     if (mnm?.pats?.[r.pat]) mp = mnm.pats[r.pat]!;
+    const b0 = barAt(st.song, p);
     for (let i = r.of; i < r.len; i++, t += step) {
       const f = Math.round((t + (i % 2 ? st.swing * step : 0)) * SR);
       if (mnm && mp) for (let tr = 0; tr < 6; tr++) if (mp.trig[tr][i]) {
-        const p = mparams(mnm, mp, tr, i); p[GATE] = (p[LEN] + 1) / 8 * step; mhits.push({ f, tr, m: mnm.kit[tr].m, p, s: 0 });
+        const p = mparams(mnm, mp, tr, i); applyAuto(st.auto, 16 + tr, b0 + i / 16, p, mp.lock[tr][i]); p[GATE] = (p[LEN] + 1) / 8 * step; mhits.push({ f, tr, m: mnm.kit[tr].m, p, s: 0 });
       }
       if (!pat) continue;
       for (let tr = 0; tr < 16; tr++) if (pat.trig[tr][i] && !(r.mute >> tr & 1))
-        hits.push({ f: f + Math.round(micro(pat.lock[tr][i]) * step * SR), tr, m: st.kit[tr].m, p: stepParams({ ...st, ...pat }, tr, i), s: pat.lock[tr][i]?.[SLIDE] ? 1 : 0 });
+        {
+          const q = stepParams({ ...st, ...pat }, tr, i);
+          applyAuto(st.auto, tr, b0 + i / 16, q, pat.lock[tr][i]);
+          hits.push({ f: f + Math.round(micro(pat.lock[tr][i]) * step * SR), tr, m: st.kit[tr].m, p: q, s: pat.lock[tr][i]?.[SLIDE] ? 1 : 0 });
+        }
     }
   }
   hits.sort((a, b) => a.f - b.f);                          // microtiming can move a hit before the step's others

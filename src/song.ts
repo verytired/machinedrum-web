@@ -28,6 +28,11 @@ export function enter(song: Row[], r: number, loops: Record<number, number> = {}
   return null;
 }
 
+// A pass's bar on the song's timeline (for automation): the passes of the pattern rows above it plus this row's
+// earlier ones. LOOP / JUMP don't move it, so a looped section replays the same stretch of automation
+export const barAt = (song: Row[], p: Pos) => song.slice(0, p.row).reduce((n, r) => n + (isPat(r) ? Math.max(1, r.rep) : 0), 0)
+  + Math.max(1, (song[p.row] as PatRow).rep) - p.left;
+
 // The pass after p: the same row again, or on to the next one
 // (a row deleted or turned into LOOP / END while it plays: carry on from where it was)
 export const next = (song: Row[], p: Pos): Next => !isPat(song[p.row]) ? enter(song, p.row, p.loops) : p.left > 1 ? { ...p, left: p.left - 1 } : enter(song, p.row + 1, p.loops);
