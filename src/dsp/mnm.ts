@@ -93,7 +93,11 @@ export class MnmEngine {
   // tr -1: the MD's BD track was hit (the duck key), not a note
   trig(tr: number, m: number, p: ArrayLike<number>) { if (tr < 0) this.dk.trig(1, DUCK_DEC); else this.vs[tr].trig(m, p); }
   sample() { /* no ROM machine */ }
+  // tap: each track's dry L/R (after VOL / PAN and the duck) as well, for stems: 2 x 6 arrays of 128, indexed by
+  // (off + i) & 127, so a 128-aligned block reads back from 0. TS only (instrumentation, not sound)
+  tap: Float32Array[] | null = null;
   render(o: Float32Array[], off: number, n: number) {
+    const tap = this.tap;
     for (let i = 0; i < n; i++) {
       let L = 0, R = 0, DL = 0, DR = 0, RL = 0, RR = 0;
       const dk = this.dk.tick();
@@ -102,6 +106,7 @@ export class MnmEngine {
         s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
         this.seed = s;
         const v = this.vs[t], x = v.tick((s >>> 0) / 4294967296 * 2 - 1), d = x * (1 - v.du * dk);
+        if (tap) { const j = (off + i) & 127; tap[2 * t][j] = d * v.gl; tap[2 * t + 1][j] = d * v.gr; }
         L += d * v.gl; R += d * v.gr; DL += d * v.dl; DR += d * v.dr; RL += d * v.rl; RR += d * v.rr;
       }
       o[0][off + i] = L; o[1][off + i] = R; o[2][off + i] = DL; o[3][off + i] = DR; o[4][off + i] = RL; o[5][off + i] = RR;

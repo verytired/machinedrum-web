@@ -1,6 +1,7 @@
 // AudioWorklet shell around the MD engine: WASM when it compiles, else the TS twin.
 // Splits each render block at hit boundaries, like AfterBirth's tr606-processor.ts
-import { MdEngine, NPAR, NOUT, MAXS } from './md';
+import { MdEngine } from './md';
+import { wasmEngine, type Engine } from './md-wasm';
 import { MnmEngine } from './mnm';
 import { Limiter } from '../master';
 
@@ -15,21 +16,6 @@ declare function registerProcessor(name: string, ctor: new (options: { processor
 
 // mnm: run the Monomachine-style engine instead (TS only, so no wasm)
 type Opts = { wasm: WebAssembly.Module | null; mnm?: boolean };
-interface Engine { trig(tr: number, m: number, p: number[], s: number): void; render(o: Float32Array[], off: number, n: number): void; sample(tr: number, d: Float32Array): void }
-
-function wasmEngine(mod: WebAssembly.Module): Engine {
-  const x = new WebAssembly.Instance(mod, {}).exports as unknown as {
-    memory: WebAssembly.Memory; init(sr: number): void; outPtr(): number; parPtr(): number; trig(tr: number, m: number, s: number): void; render(n: number): void;
-    smpPtr(tr: number): number; smpLen(tr: number, n: number): void;
-  };
-  x.init(sampleRate);
-  const buf = new Float32Array(x.memory.buffer, x.outPtr(), 128 * NOUT), par = new Float64Array(x.memory.buffer, x.parPtr(), NPAR);
-  return {
-    trig(tr, m, p, s) { par.set(p); x.trig(tr, m, s); },
-    render(o, off, n) { x.render(n); for (let k = 0; k < NOUT; k++) o[k].set(buf.subarray(k * 128, k * 128 + n), off); },
-    sample(tr, d) { const n = Math.min(d.length, MAXS); new Float32Array(x.memory.buffer, x.smpPtr(tr), n).set(d.subarray(0, n)); x.smpLen(tr, n); },
-  };
-}
 
 class MdProcessor extends AudioWorkletProcessor {
   private engine: Engine;
@@ -40,7 +26,7 @@ class MdProcessor extends AudioWorkletProcessor {
     let name = 'js', e: Engine | undefined;
     try {
       if (o.mnm) { e = new MnmEngine(sampleRate); name = 'mnm'; }
-      else if (o.wasm) { e = wasmEngine(o.wasm); name = 'wasm'; }
+      else if (o.wasm) { e = wasmEngine(o.wasm, sampleRate); name = 'wasm'; }
     } catch (err) {
       this.port.postMessage({ k: 'error', msg: String(err) });
     }

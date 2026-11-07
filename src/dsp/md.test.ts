@@ -100,6 +100,19 @@ describe('MD engine', () => {
     expect(rms(mn(true), at, at + w) / rms(mn(false), at, at + w)).toBeLessThan(0.3);
   });
 
+  it('the stem tap: the tracks add up to the dry mix, block for block', () => {
+    const e = js(), tap = e.tap = Array.from({ length: 32 }, () => new Float32Array(128)), n = SR / 2, o = Array.from({ length: NOUT }, () => new Float32Array(n));
+    const sum = [new Float32Array(n), new Float32Array(n)];
+    [3, 4, 7, 5].forEach((m, k) => e.trig(k * 2, m, trackFor(m).p));
+    for (let b = 0; b < n; b += 128) {
+      e.render(o, b, 50); e.trig(1, 4, trackFor(4).p); e.render(o, b + 50, 78); // a trig mid-block, as drive() does
+      for (let i = 0; i < 128; i++) for (let t = 0; t < 16; t++) { sum[0][b + i] += tap[2 * t][i]; sum[1][b + i] += tap[2 * t + 1][i]; }
+    }
+    let err = 0; for (let i = 0; i < n; i++) err = Math.max(err, Math.abs(sum[0][i] - o[0][i]), Math.abs(sum[1][i] - o[1][i]));
+    expect(peak(o[0])).toBeGreaterThan(0.1);
+    expect(err).toBeLessThan(1e-5);
+  });
+
   it('VOL 0 is silent', () => {
     const p = trackFor(3).p; p[VOL] = 0;
     expect(peak(drive(js(), [[0, 0, 3, p]], SR)[0])).toBe(0);

@@ -1,12 +1,13 @@
 // Render the song to a WAV file, off line: the song is walked the way SONG mode plays it (rows, REP, LOOP / JUMP,
-// per-row BPM, OF / LEN, mutes, swing), the TS engine renders the hits, and the same master effects and LEVEL run in
-// an OfflineAudioContext; then the master end stage (master.ts, as live), the meter and a 24-bit WAV.
-// Deterministic, no AudioWorklet involved.
-import { MdEngine, NOUT, VOL } from './dsp/md';
+// per-row BPM, OF / LEN, mutes, swing), the engines render the hits (the MD on its WASM build when given one, as
+// live), and the same master effects and LEVEL run in an OfflineAudioContext; then the master end stage (master.ts,
+// as live), the meter and a 24-bit WAV. Deterministic, no AudioWorklet involved.
+import { MdEngine, NOUT } from './dsp/md';
+import { wasmEngine, type Engine } from './dsp/md-wasm';
 import { MnmEngine, GATE, LEN } from './dsp/mnm';
 import type { MState } from './mnm';
 import { masterFx, dynVals } from './fx';
-import { Limiter, measure, type Report } from './master';
+import { Limiter, Meter, type Report } from './master';
 import { stepParams, SLIDE, micro, TRACKS, type State } from './machines';
 import { enter, next, type PatRow } from './song';
 
@@ -39,22 +40,39 @@ export function songHits(st: State, mnm?: MState): { hits: Hit[]; mhits: Hit[]; 
   return { hits, mhits, frames: Math.round(t * SR) };
 }
 
-// samples: the ROM tracks' audio at SR; level: the LEVEL knob (0-127). Returns a 24-bit stereo WAV and its meter report.
-// stems: also each sounding track alone (dry, after VOL / PAN and the duck, before the master effects and limiter)
-export async function renderWav(st: State, samples: (Float32Array | undefined)[], level: number, mnm?: MState, stems = false):
+// samples: the ROM tracks' audio at SR; level: the LEVEL knob (0-127); wasm: the compiled md.wasm (null = TS engine).
+// Returns a 24-bit stereo WAV and its meter report.
+// stems: also each sounding track alone (dry, after VOL / PAN and the duck, before the master effects and limiter),
+// tapped from the same pass (TS engines: the WASM build has no tap) and metered / written block by block
+export async function renderWav(st: State, samples: (Float32Array | undefined)[], level: number, mnm?: MState, stems = false, wasm: WebAssembly.Module | null = null):
   Promise<{ wav: Blob; report: Report & { stems?: (Report & { name: string })[] }; stems?: { name: string; wav: Blob }[] }> {
   const song = songHits(st, mnm);
   if (!song.frames) throw new Error('the song is empty');
-  const n = song.frames + 3 * SR, md = () => { const e = new MdEngine(SR); samples.forEach((d, tr) => { if (d) e.sample(tr, d); }); return e; };
-  const o = bus(n), mo = bus(n);
-  drive(md(), song.hits, o, n);
-  if (song.mhits.some(h => h.tr >= 0)) drive(new MnmEngine(SR), song.mhits, mo, n); // not just duck keys
+  const n = song.frames + 3 * SR, g = level / 127, o = bus(n), mo = bus(n);
+  const sts: { name: string; meter: Meter; wav: Wav }[] = [];
+  const tapped = (e: MdEngine | MnmEngine, hits: Hit[], names: string[]) => {
+    if (!stems) return undefined;
+    const tap = e.tap = names.flatMap(() => [new Float32Array(128), new Float32Array(128)]);
+    const s = names.map((name, tr) => hits.some(h => h.tr === tr) ? { name, meter: new Meter(SR, false), wav: new Wav(n) } : null);
+    s.forEach(x => { if (x) sts.push(x); });
+    return (b: number, len: number) => s.forEach((x, tr) => {
+      if (!x) return;
+      const L = tap[2 * tr], R = tap[2 * tr + 1];
+      for (let i = 0; i < len; i++) { L[i] *= g; R[i] *= g; }
+      x.meter.push(L, R, 0, len); x.wav.put(b, L, R, len);
+    });
+  };
+  let e: Engine | MdEngine = new MdEngine(SR);
+  if (wasm && !stems) try { e = wasmEngine(wasm, SR); } catch { /* the TS twin */ }
+  samples.forEach((d, tr) => { if (d) e.sample(tr, d); });
+  drive(e, song.hits, o, n, e instanceof MdEngine ? tapped(e, song.hits, TRACKS) : undefined);
+  if (song.mhits.some(h => h.tr >= 0)) { const m = new MnmEngine(SR); drive(m, song.mhits, mo, n, tapped(m, song.mhits, [1, 2, 3, 4, 5, 6].map(k => 'MNM' + k))); } // not just duck keys
   o.forEach((c, k) => mo[k].forEach((v, i) => { c[i] += v; })); // the MNM into the same buses
 
   const ctx = new OfflineAudioContext(2, n, SR);
   const src = (k: number) => { const buf = ctx.createBuffer(2, n, SR); buf.copyToChannel(o[k], 0); buf.copyToChannel(o[k + 1], 1);
     const s = new AudioBufferSourceNode(ctx, { buffer: buf }); s.start(); return s; };
-  const out = new GainNode(ctx, { gain: level / 127 });
+  const out = new GainNode(ctx, { gain: g });
   out.connect(ctx.destination);
   const fx = masterFx(ctx, out);
   fx.set(st.fx, 60 / st.tempo / 4);
@@ -64,32 +82,17 @@ export async function renderWav(st: State, samples: (Float32Array | undefined)[]
   lim.set(...dynVals(st.fx));
   lim.process(l, rr);
   const L = l.subarray(lim.lat), R = rr.subarray(lim.lat);    // drop the look-ahead delay
-  const report: Report & { stems?: (Report & { name: string })[] } = measure(L, R, SR);
-  if (!stems) return { wav: wav24(L, R), report };
-
-  // one render per sounding track; the BD track stays in every MD stem at VOL 0 so the duck still fires
-  const out2: { name: string; wav: Blob }[] = [], g = level / 127;
-  report.stems = [];
-  const one = (name: string, x: Float32Array[]) => {
-    const a = x[0].map(v => v * g), b = x[1].map(v => v * g);
-    report.stems!.push({ name, ...measure(a, b, SR) }); out2.push({ name, wav: wav24(a, b) });
-  };
-  for (let tr = 0; tr < 16; tr++) if (song.hits.some(h => h.tr === tr)) {
-    const x = bus(n);
-    drive(md(), song.hits.filter(h => h.tr === tr || h.tr === 0).map(h => h.tr === tr ? h : { ...h, p: Object.assign(h.p.slice(), { [VOL]: 0 }) }), x, n);
-    one(TRACKS[tr], x);
-  }
-  for (let tr = 0; tr < 6; tr++) if (song.mhits.some(h => h.tr === tr)) {
-    const x = bus(n);
-    drive(new MnmEngine(SR), song.mhits.filter(h => h.tr === tr || h.tr < 0), x, n);
-    one('MNM' + (tr + 1), x);
-  }
-  return { wav: wav24(L, R), report, stems: out2 };
+  const m = new Meter(SR); m.push(L, R);
+  const report: Report & { stems?: (Report & { name: string })[] } = m.report(), wav = new Wav(L.length);
+  wav.put(0, L, R, L.length);
+  if (!stems) return { wav: wav.blob(), report };
+  report.stems = sts.map(x => ({ name: x.name, ...x.meter.report() }));
+  return { wav: wav.blob(), report, stems: sts.map(x => ({ name: x.name, wav: x.wav.blob() })) };
 }
 const bus = (n: number) => Array.from({ length: NOUT }, () => new Float32Array(n));
 
-// 128-frame blocks, split at hits, as md-processor.ts does
-function drive(e: { trig(tr: number, m: number, p: number[], s: number): void; render(o: Float32Array[], off: number, n: number): void }, hits: Hit[], o: Float32Array[], n: number) {
+// 128-frame blocks, split at hits, as md-processor.ts does; block(b, len) after each one
+function drive(e: { trig(tr: number, m: number, p: number[], s: number): void; render(o: Float32Array[], off: number, n: number): void }, hits: Hit[], o: Float32Array[], n: number, block?: (b: number, len: number) => void) {
   let h = 0;
   for (let b = 0; b < n; b += 128) {
     const len = Math.min(128, n - b);
@@ -100,15 +103,22 @@ function drive(e: { trig(tr: number, m: number, p: number[], s: number): void; r
       e.trig(hits[h].tr, hits[h].m, hits[h].p, hits[h].s); h++;
     }
     if (pos < len) e.render(o, b + pos, len - pos);
+    block?.(b, len);
   }
 }
 
-function wav24(l: Float32Array, r: Float32Array): Blob {
-  const n = l.length, v = new DataView(new ArrayBuffer(44 + n * 6));
-  const str = (o: number, t: string) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
-  str(0, 'RIFF'); v.setUint32(4, 36 + n * 6, true); str(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
-  v.setUint32(24, SR, true); v.setUint32(28, SR * 6, true); v.setUint16(32, 6, true); v.setUint16(34, 24, true); str(36, 'data'); v.setUint32(40, n * 6, true);
-  const put = (o: number, x: number) => { const s = Math.round(Math.max(-1, Math.min(1, x)) * 8388607); v.setUint8(o, s & 255); v.setUint8(o + 1, s >> 8 & 255); v.setUint8(o + 2, s >> 16 & 255); };
-  for (let i = 0; i < n; i++) { put(44 + i * 6, l[i]); put(47 + i * 6, r[i]); }
-  return new Blob([v.buffer], { type: 'audio/wav' });
+// a 24-bit stereo WAV of n frames, filled by put() in any order
+class Wav {
+  private v: DataView;
+  constructor(n: number) {
+    const v = this.v = new DataView(new ArrayBuffer(44 + n * 6));
+    const str = (o: number, t: string) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 6, true); str(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
+    v.setUint32(24, SR, true); v.setUint32(28, SR * 6, true); v.setUint16(32, 6, true); v.setUint16(34, 24, true); str(36, 'data'); v.setUint32(40, n * 6, true);
+  }
+  put(at: number, l: Float32Array, r: Float32Array, len: number) {
+    const v = this.v, w = (o: number, x: number) => { const s = Math.round(Math.max(-1, Math.min(1, x)) * 8388607); v.setUint8(o, s & 255); v.setUint8(o + 1, s >> 8 & 255); v.setUint8(o + 2, s >> 16 & 255); };
+    for (let i = 0; i < len; i++) { w(44 + (at + i) * 6, l[i]); w(47 + (at + i) * 6, r[i]); }
+  }
+  blob() { return new Blob([this.v.buffer as ArrayBuffer], { type: 'audio/wav' }); }
 }

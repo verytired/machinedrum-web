@@ -58,12 +58,14 @@ let limNode: AudioWorkletNode | undefined;
 const applyFx = () => { fx?.set(st.fx, 60 / tempo.value / 4); limNode?.port.postMessage(dynVals(st.fx)); };
 let ctx: AudioContext | undefined, node: AudioWorkletNode | undefined, out: GainNode | undefined, engine = '';
 let ready: Promise<void> | undefined;
+// md.wasm compiled once, for the worklet and EXP WAV (null = it didn't compile: the TS engine)
+let wasmMod: Promise<WebAssembly.Module | null> | undefined;
+const getWasm = () => wasmMod ??= fetch(wasmUrl).then(r => r.arrayBuffer()).then(b => WebAssembly.compile(b)).catch(() => null);
 async function ensureAudio() {
   await (ready ??= (async () => {
     ctx = new AudioContext({ latencyHint: 'interactive' });
     await ctx.audioWorklet.addModule(procUrl);
-    let wasm: WebAssembly.Module | null = null;
-    try { wasm = await WebAssembly.compile(await (await fetch(wasmUrl)).arrayBuffer()); } catch { /* JS engine */ }
+    const wasm = await getWasm();
     node = new AudioWorkletNode(ctx, 'md', { numberOfInputs: 0, numberOfOutputs: 3, outputChannelCount: [2, 2, 2], processorOptions: { wasm } });
     node.port.onmessage = e => { if (e.data.k === 'engine') { engine = e.data.name.toUpperCase(); draw(); } };
     out = new GainNode(ctx, { gain: level / 127 });
@@ -332,7 +334,7 @@ $('wav').onclick = async (ev: MouseEvent) => {
   try {
     stash(); await restored;
     const smp = await Promise.all(saved.map((x, tr) => x && st.kit[tr].m === ROM ? pcm(x).then(s => s.d).catch(() => undefined) : undefined));
-    const base = `machinedrum-${new Date().toISOString().slice(0, 10)}`, r = await renderWav(st, smp, level, mnm.state(), ev.shiftKey);
+    const base = `machinedrum-${new Date().toISOString().slice(0, 10)}`, r = await renderWav(st, smp, level, mnm.state(), ev.shiftKey, await getWasm());
     download(r.wav, base + '.wav');
     for (const s of r.stems ?? []) { await new Promise(ok => setTimeout(ok, 400)); download(s.wav, `${base}-${s.name}.wav`); } // Chrome drops a burst of ~10+
     console.log('[render]', JSON.stringify(r.report));

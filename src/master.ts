@@ -47,65 +47,87 @@ export class Limiter {
 }
 
 // ---- meter ----
+// Streaming: push() blocks of any size, report() at the end, so a song's stems can be metered while they render
+// without holding them in memory
 type Bq = [b0: number, b1: number, b2: number, a1: number, a2: number];
 const rbj = (type: 'lp' | 'hp', fs: number, f: number, q: number): Bq => {
   const w = 2 * Math.PI * f / fs, c = Math.cos(w), al = Math.sin(w) / (2 * q), k = type === 'lp' ? (1 - c) / 2 : (1 + c) / 2, a0 = 1 + al;
   return [k / a0, (type === 'lp' ? 1 - c : -(1 + c)) / a0, k / a0, -2 * c / a0, (1 - al) / a0];
 };
-function filt(x: Float32Array, ...fs: Bq[]): Float32Array {
-  const y = Float32Array.from(x);
-  for (const [b0, b1, b2, a1, a2] of fs) {
-    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-    for (let i = 0; i < y.length; i++) { const v = y[i], o = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = v; y2 = y1; y1 = o; y[i] = o; }
+// a cascade of biquads, one sample at a time (state: x1 x2 y1 y2 per stage)
+class Chain {
+  private z: Float64Array; private c: Float64Array;
+  constructor(c: Bq[]) { this.c = Float64Array.from(c.flat()); this.z = new Float64Array(c.length * 4); }
+  tick(v: number) {
+    const z = this.z, c = this.c;
+    for (let k = 0, j = 0; k < c.length; k += 5, j += 4) {
+      const o = c[k] * v + c[k + 1] * z[j] + c[k + 2] * z[j + 1] - c[k + 3] * z[j + 2] - c[k + 4] * z[j + 3];
+      z[j + 1] = z[j]; z[j] = v; z[j + 3] = z[j + 2]; z[j + 2] = o; v = o;
+    }
+    return v;
   }
-  return y;
 }
 const db = (p: number) => p > 0 ? 10 * Math.log10(p) : -Infinity;
 const r1 = (v: number) => Math.round(v * 10) / 10;
-
-// BS.1770 loudness: K-weighted, 400 ms blocks (75 % overlap), -70 LUFS absolute and -10 LU relative gates
-function loudness(l: Float32Array, r: Float32Array, fs: number) {
-  // the two K-weighting stages for any rate, as libebur128 derives them (48 kHz gives the spec's coefficients)
+// the two K-weighting stages for any rate, as libebur128 derives them (48 kHz gives the BS.1770 coefficients)
+function kWeight(fs: number): Bq[] {
   const K1 = Math.tan(Math.PI * 1681.974450955533 / fs), Q1 = 0.7071752369554196, Vh = Math.pow(10, 3.999843853973347 / 20), Vb = Math.pow(Vh, 0.4996667741545416);
   const a1 = 1 + K1 / Q1 + K1 * K1, K2 = Math.tan(Math.PI * 38.13547087602444 / fs), Q2 = 0.5003270373238773, a2 = 1 + K2 / Q2 + K2 * K2;
-  const kw: Bq[] = [
+  return [
     [(Vh + Vb * K1 / Q1 + K1 * K1) / a1, 2 * (K1 * K1 - Vh) / a1, (Vh - Vb * K1 / Q1 + K1 * K1) / a1, 2 * (K1 * K1 - 1) / a1, (1 - K1 / Q1 + K1 * K1) / a1],
     [1, -2, 1, 2 * (K2 * K2 - 1) / a2, (1 - K2 / Q2 + K2 * K2) / a2],
   ];
-  const kl = filt(l, ...kw), kr = filt(r, ...kw), hop = Math.round(0.1 * fs), ms: number[] = [];
-  for (let s = 0; s + hop <= kl.length; s += hop) { let e = 0; for (let i = s; i < s + hop; i++) e += kl[i] * kl[i] + kr[i] * kr[i]; ms.push(e / hop); }
-  const win = (k: number, n: number) => { let e = 0; for (let j = k; j < k + n; j++) e += ms[j]; return e / n; };
-  const lu = (p: number) => -0.691 + db(p);
-  const blocks: number[] = []; for (let k = 0; k + 4 <= ms.length; k++) blocks.push(win(k, 4));
-  const abs = blocks.filter(p => lu(p) > -70), mean = (a: number[]) => a.reduce((s, p) => s + p, 0) / a.length;
-  const rel = lu(mean(abs)) - 10, gated = abs.filter(p => lu(p) > rel);
-  let st = -Infinity; for (let k = 0; k + 30 <= ms.length; k++) st = Math.max(st, lu(win(k, 30)));
-  return { lufs: gated.length ? lu(mean(gated)) : -Infinity, stMax: st };
 }
-
-// 4x true peak: Hann-windowed sinc, 16 taps each side
+// 4x true peak: Hann-windowed sinc, 16 taps each side, the 3 in-between phases
 const TAPS = 16, PH = [1, 2, 3].map(f => Array.from({ length: 2 * TAPS }, (_, k) => {
   const t = k - TAPS + 1 - f / 4; return Math.sin(Math.PI * t) / (Math.PI * t) * (0.5 + 0.5 * Math.cos(Math.PI * t / TAPS));
 }));
-function truePeak(x: Float32Array) {
-  let p = 0;
-  for (let i = 0; i < x.length; i++) {
-    p = Math.max(p, Math.abs(x[i]));
-    if (i < TAPS - 1 || i + TAPS >= x.length) continue;
-    for (const h of PH) { let s = 0; for (let k = 0; k < 2 * TAPS; k++) s += h[k] * x[i - TAPS + 1 + k]; p = Math.max(p, Math.abs(s)); }
-  }
-  return p;
-}
 
 export const BANDS: [string, number, number][] = [['sub', 20, 60], ['low', 60, 250], ['mid', 250, 2000], ['high', 2000, 8000], ['air', 8000, 20000]];
 export interface Report { lufs: number; stMax: number; tp: number; peak: number; plr: number; bands: Record<string, number> }
-// bands: each band's level against the whole mix in dB (mono sum, 4th-order band edges)
-export function measure(l: Float32Array, r: Float32Array, fs: number): Report {
-  const { lufs, stMax } = loudness(l, r, fs);
-  let peak = 0; for (let i = 0; i < l.length; i++) peak = Math.max(peak, Math.abs(l[i]), Math.abs(r[i]));
-  const tp = Math.max(truePeak(l), truePeak(r)), mono = l.map((v, i) => (v + r[i]) / 2);
-  const pow = (x: Float32Array) => { let e = 0; for (let i = 0; i < x.length; i++) e += x[i] * x[i]; return e / x.length; }, all = pow(mono);
-  const q = Math.SQRT1_2, bands: Record<string, number> = {};
-  for (const [name, lo, hi] of BANDS) bands[name] = r1(db(pow(filt(mono, rbj('hp', fs, lo, q), rbj('hp', fs, lo, q), ...(hi < fs / 2.2 ? [rbj('lp', fs, hi, q), rbj('lp', fs, hi, q)] : []))) / all));
-  return { lufs: r1(lufs), stMax: r1(stMax), tp: r1(20 * Math.log10(tp)), peak: r1(20 * Math.log10(peak)), plr: r1(20 * Math.log10(tp) - lufs), bands };
+
+export class Meter {
+  private kl: Chain; private kr: Chain; private hop: number; private acc = 0; private cnt = 0; private ms: number[] = [];
+  private hl = new Float64Array(4 * TAPS); private hr = new Float64Array(4 * TAPS); private h = 0; private tp = 0; private pk = 0;
+  private bands: Chain[]; private bp: Float64Array; private all = 0; private n = 0;
+  // truePeak false: tp is the sample peak (a third of the cost; the stems use it)
+  constructor(fs: number, private truePeak = true) {
+    const kw = kWeight(fs), q = Math.SQRT1_2;
+    this.kl = new Chain(kw); this.kr = new Chain(kw); this.hop = Math.round(0.1 * fs);
+    // bands: 4th-order edges on the mono sum
+    this.bands = BANDS.map(([, lo, hi]) => new Chain([rbj('hp', fs, lo, q), rbj('hp', fs, lo, q), ...(hi < fs / 2.2 ? [rbj('lp', fs, hi, q), rbj('lp', fs, hi, q)] : [])]));
+    this.bp = new Float64Array(BANDS.length);
+  }
+  push(l: ArrayLike<number>, r: ArrayLike<number>, off = 0, len = l.length - off) {
+    const hl = this.hl, hr = this.hr, W = 2 * TAPS;
+    for (let i = off; i < off + len; i++) {
+      const a = l[i], b = r[i], x = this.kl.tick(a), y = this.kr.tick(b);
+      this.acc += x * x + y * y;
+      if (++this.cnt === this.hop) { this.ms.push(this.acc / this.hop); this.acc = 0; this.cnt = 0; }
+      this.pk = Math.max(this.pk, Math.abs(a), Math.abs(b));
+      // true peak: the window of the last 2*TAPS samples (doubled ring, so it reads in one straight run)
+      const h = this.h; hl[h] = hl[h + W] = a; hr[h] = hr[h + W] = b; this.h = (h + 1) % W;
+      if (this.truePeak && ++this.n >= W) for (const c of PH) {
+        let s = 0, t = 0;
+        for (let k = 0, j = this.h; k < W; k++, j++) { s += c[k] * hl[j]; t += c[k] * hr[j]; }
+        this.tp = Math.max(this.tp, Math.abs(s), Math.abs(t));
+      }
+      const m = (a + b) / 2;
+      this.all += m * m;
+      for (let k = 0; k < this.bands.length; k++) { const v = this.bands[k].tick(m); this.bp[k] += v * v; }
+    }
+  }
+  // BS.1770 loudness: 400 ms blocks (75 % overlap), -70 LUFS absolute and -10 LU relative gates; short term = 3 s
+  report(): Report {
+    const ms = this.ms, lu = (p: number) => -0.691 + db(p);
+    const win = (k: number, n: number) => { let e = 0; for (let j = k; j < k + n; j++) e += ms[j]; return e / n; };
+    const blocks: number[] = []; for (let k = 0; k + 4 <= ms.length; k++) blocks.push(win(k, 4));
+    const mean = (a: number[]) => a.reduce((s, p) => s + p, 0) / a.length, abs = blocks.filter(p => lu(p) > -70);
+    const rel = lu(mean(abs)) - 10, gated = abs.filter(p => lu(p) > rel), lufs = gated.length ? lu(mean(gated)) : -Infinity;
+    let st = -Infinity; for (let k = 0; k + 30 <= ms.length; k++) st = Math.max(st, lu(win(k, 30)));
+    const tp = 20 * Math.log10(Math.max(this.tp, this.pk)), bands: Record<string, number> = {};
+    BANDS.forEach(([name], k) => { bands[name] = r1(db(this.bp[k] / this.all)); });
+    return { lufs: r1(lufs), stMax: r1(st), tp: r1(tp), peak: r1(20 * Math.log10(this.pk)), plr: r1(tp - lufs), bands };
+  }
 }
+export function measure(l: Float32Array, r: Float32Array, fs: number): Report { const m = new Meter(fs); m.push(l, r); return m.report(); }
