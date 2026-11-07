@@ -1,7 +1,8 @@
 // Master bus end stage and meter, shared by the live worklet (md-processor.ts) and EXP WAV (render.ts).
 // Limiter: MONO (side high-passed) -> makeup GAIN -> soft clip (CLIP, 0 = off) -> stereo-linked look-ahead brickwall at CEIL. The gain is the minimum of the
 // needed gains over the look-ahead window, released, then box-averaged over the same window, so it is down to a
-// peak's gain by the time that peak leaves the delay line: no overs, no attack click.
+// peak's gain by the time that peak leaves the delay line: no overs, no attack click. The peaks are true peaks: each
+// sample and the three 4x points after it (the meter's interpolation), so a hard-driven master stays under CEIL in dBTP too.
 // Meter: integrated / short-term max loudness (ITU-R BS.1770-4, gated), 4x true peak, and the level per band.
 export const CEIL = Math.pow(10, -1 / 20); // -1 dBFS
 const LOOK = 0.005, REL = 0.08;
@@ -10,12 +11,13 @@ export class Limiter {
   readonly lat: number; // delay in samples
   private n: number; private dl: Float32Array; private dr: Float32Array;
   private qv: Float64Array; private qi: Float64Array; private qh = 0; private qt = 0; // monotonic deque (ring) for the window min
+  private th = new Float64Array(8 * TAPS); private tw = 0; // true-peak window: the last 2*TAPS samples per channel, doubled ring (L at 0, R at 4*TAPS)
   private box: Float64Array; private sum: number; private g = 1; private kr: number; private i = 0;
   private drive = 1; private knee = Infinity; private side: Chain | null = null; private mlo: Chain | null = null; private mhi: Chain | null = null; private fs: number; private monoV = 0;
   constructor(fs: number) {
     this.fs = fs;
     const n = this.n = Math.max(2, Math.round(LOOK * fs));
-    this.lat = n - 1;
+    this.lat = n - 1 + TAPS;
     this.dl = new Float32Array(n); this.dr = new Float32Array(n);
     this.qv = new Float64Array(n + 1); this.qi = new Float64Array(n + 1);
     this.box = new Float64Array(n).fill(1); this.sum = n;
@@ -42,7 +44,16 @@ export class Limiter {
     for (let j = off; j < off + len; j++) {
       let xa = l[j], xb = r[j];
       if (this.side) { const m0 = (xa + xb) / 2, md = this.mlo!.tick(m0) + this.mhi!.tick(m0), sd = this.side.tick((xa - xb) / 2); xa = md + sd; xb = md - sd; }
-      const xl = this.sat(xa), xr = this.sat(xb), pk = Math.max(Math.abs(xl), Math.abs(xr)), need = pk > CEIL ? CEIL / pk : 1, i = this.i;
+      const W = 2 * TAPS, th = this.th, h = this.tw;
+      th[h] = th[h + W] = this.sat(xa); th[4 * TAPS + h] = th[4 * TAPS + h + W] = this.sat(xb); this.tw = (h + 1) % W;
+      const s0 = this.tw, xl = th[s0 + TAPS - 1], xr = th[4 * TAPS + s0 + TAPS - 1], i = this.i; // the sample TAPS back
+      let pk = Math.max(Math.abs(xl), Math.abs(xr));
+      for (const c of PH) {
+        let u = 0, v = 0;
+        for (let k = 0; k < W; k++) { u += c[k] * th[s0 + k]; v += c[k] * th[4 * TAPS + s0 + k]; }
+        pk = Math.max(pk, Math.abs(u), Math.abs(v));
+      }
+      const need = pk > CEIL ? CEIL / pk : 1;
       while (this.qt !== this.qh && this.qv[(this.qt + m - 1) % m] >= need) this.qt = (this.qt + m - 1) % m;
       this.qv[this.qt] = need; this.qi[this.qt] = i; this.qt = (this.qt + 1) % m;
       while (this.qi[this.qh] <= i - n) this.qh = (this.qh + 1) % m;

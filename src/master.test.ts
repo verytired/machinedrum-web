@@ -56,3 +56,10 @@ test('MONO: the low end of a one-sided signal ends up in both channels, the high
   expect(run(40)).toBeGreaterThan(0.8);   // 40 Hz, left only: now (nearly) mono
   expect(run(2000)).toBeLessThan(1e-4);   // 2 kHz, left only: untouched
 });
+
+test('limiter: true peaks under the ceiling too, even driven hard (high tones, clipped kicks)', () => {
+  const lim = new Limiter(FS), l = sine(FS / 4 - 50, 2, 2, Math.PI / 4), r = sine(55, 3, 2); // samples fall between the crests
+  for (let i = 0; i < l.length; i++) r[i] += Math.sign(Math.sin(2 * Math.PI * 3000 * i / FS)) * 0.5; // square edges
+  lim.set(64, 80); lim.process(l, r);
+  expect(measure(l.subarray(FS / 10), r.subarray(FS / 10), FS).tp).toBeLessThanOrEqual(-0.9);
+});
