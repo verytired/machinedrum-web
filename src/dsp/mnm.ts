@@ -13,10 +13,15 @@ export const NOTE = 32, GATE = 33;
 // locks beyond the track's params: SLD = a slide trig (the pitch glides ~60 ms from the sounding note, no retrigger: the
 // envelopes, phases and LFO carry on, only the gate is renewed), ACC = an accent (+3 dB, the filter envelope 1.5 octaves harder)
 export const SLD = 34, ACC = 35;
+// CHD (a lock, SWAVE only): a chord on one trig, CHD >> 4 picks the shape; its notes are saws over the root, through
+// the track's one filter and envelope (paraphonic), the sum kept at the root's level
+export const CHD = 36;
+export const CHORDS = [[], [3, 7], [4, 7], [3, 7, 10], [4, 7, 11], [5, 7], [3, 10, 14], [7, 12]];   // -, m, M, m7, M7, sus4, m9, 5
 const SWAVE = 0; // 1 = FM
 
 class Voice {
   ph = 0; ph2 = 0; sph = 0; mph = 0; fb = 0; f = 110; ft = 110; gk = 0;
+  cr: number[] = []; cph = [0, 0, 0]; cg = 1;
   m = SWAVE; wav = 0; pw = 0.5; det = 1; o2 = 0; sub = 0; nz = 0; rat = 1; idx = 0; ie = 0; ik = 1; fbk = 0;
   // AMP: attack ramp, decay to sustain, release after the gate
   stage = 0; e = 0; ai = 0; dk = 1; sus = 0; rk = 1; gate = 0;
@@ -33,6 +38,7 @@ class Voice {
       return;
     }
     this.m = m; this.f = this.ft = f; this.gk = 0;
+    this.cr = m == SWAVE ? (CHORDS[(p[CHD] ?? 0) >> 4] ?? []).map(s => Math.pow(2, s / 12)) : []; this.cg = 1 / Math.sqrt(1 + this.cr.length);
     if (m == SWAVE) { this.wav = p[0] / 127; this.pw = 0.5 - p[1] / 127 * 0.45; this.det = Math.pow(2, p[2] / 127 * 0.5 / 12); this.o2 = p[3] / 127; this.sub = p[4] / 127; this.nz = p[5] / 127; }
     else { this.rat = Math.max(0.5, Math.round(p[0] / 127 * 16) / 2); this.idx = p[1] / 127 * 10; this.ie = 1; this.ik = coef(fs, ex(p[2], 0.01, 4)); this.fbk = p[3] / 127 * 1.5; }
     this.stage = 1; this.ai = 1 / (ex(p[ATK], 0.001, 2) * fs); this.dk = coef(fs, ex(p[DEC], 0.01, 4));
@@ -65,6 +71,14 @@ class Voice {
       const pulse = (p < pw ? 1 : -1) + blep(p, dt) - blep(q, dt);
       const dt2 = Math.min(dt * this.det, 0.45), p2 = this.ph2;
       x = (1 - this.wav) * saw + this.wav * pulse + this.o2 * (2 * p2 - 1 - blep(p2, dt2)) + this.sub * Math.sin(TAU * this.sph) + this.nz * noise;
+      if (this.cr.length) {
+        for (let k = 0; k < this.cr.length; k++) {
+          const dc = Math.min(dt * this.cr[k], 0.45), pc = this.cph[k];
+          x += 2 * pc - 1 - blep(pc, dc);
+          this.cph[k] = pc + dc >= 1 ? pc + dc - 1 : pc + dc;
+        }
+        x *= this.cg;
+      }
       this.ph += dt; if (this.ph >= 1) this.ph -= 1;
       this.ph2 += dt2; if (this.ph2 >= 1) this.ph2 -= 1;
       this.sph += dt / 2; if (this.sph >= 1) this.sph -= 1;

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { MnmEngine, MNPAR, NOTE, GATE, DEST, DEP, SLD, ACC, ATK, SUS, FENV } from './mnm';
+import { MnmEngine, MNPAR, NOTE, GATE, DEST, DEP, SLD, ACC, ATK, SUS, FENV, CHD } from './mnm';
 
-const SR = 48000;
+const SR = 48000, TAU = 2 * Math.PI;
 const TRACK = [0, 60, 60, 40, 3, 0, 90, 64, 0, 90, 20, 90, 0, 50, 0, 0, 40, 0, 0, 0, 0, 0, 0, 0];
 const params = (m: number, over: Record<number, number> = {}) => {
   const p = [m ? 16 : 0, 40, 20, 40, 30, 0, 0, 0, ...TRACK, 45]; p[GATE] = 0.1;
@@ -51,5 +51,13 @@ describe('MnM engine', () => {
     expect(run({ [SLD]: 1 }, false)).toEqual(run({}, false));                                    // nothing sounding: a plain trig
     const a = render(0, { [ACC]: 1 }), n = render(0);
     expect(rms(a, SR * 0.02, SR * 0.08) / rms(n, SR * 0.02, SR * 0.08)).toBeGreaterThan(1.2);
+  });
+  it('CHD plays a chord on one trig (m: the minor third and the fifth over the root), at about the root alone level; FM ignores it', () => {
+    const g = (x: Float32Array, f: number) => { let re = 0, im = 0; for (let i = 0; i < SR * 0.1; i++) { re += x[i] * Math.cos(TAU * f * i / SR); im += x[i] * Math.sin(TAU * f * i / SR); } return Math.hypot(re, im); };
+    const over = { 3: 0, 4: 0, 16: 0, 17: 127 };                  // a plain saw, the filter open
+    const one = render(0, over), m = render(0, { ...over, [CHD]: 16 }), root = 110 * Math.pow(2, 0);
+    for (const s of [3, 7]) expect(g(m, root * Math.pow(2, s / 12))).toBeGreaterThan(g(one, root * Math.pow(2, s / 12)) * 10);
+    expect(Math.abs(20 * Math.log10(rms(m, 0, SR * 0.1) / rms(one, 0, SR * 0.1)))).toBeLessThan(3);
+    expect(render(1, { [CHD]: 16 })).toEqual(render(1));
   });
 });
