@@ -6,6 +6,10 @@
 // ponytail: VOL/PAN/filter only change on the next hit, unlike the hardware; add per-sample smoothing if it bothers
 export const NPAR = 24;
 export const AMD = 8, AMF = 9, EQF = 10, EQG = 11, FLTF = 12, FLTW = 13, FLTQ = 14, SRR = 15, DIST = 16, VOL = 17, PAN = 18, DEL = 19, REV = 20;
+// DUCK (not on the MD; its LFOS slot, harmless in a .syx since LFOD is 0): how far a BD-track hit pushes this track down
+// (dry and sends, so its echo / gate box return doesn't fill the kick's space), sidechain style. The duck envelope is the engine's, fired by every track-1 trig.
+// ponytail: fixed release; make DUCK_DEC a knob if one curve doesn't suit every tempo
+export const DUCK = 21, DUCK_DEC = 1.0, DUCK_MAX = 0.9;
 export const NOUT = 6; // dry L/R, echo send L/R, gate box send L/R
 export const MAXS = 1 << 18; // ROM sample length cap per track (~5.5 s at 48 kHz)
 
@@ -67,7 +71,7 @@ class Voice {
   // tone
   ph = 0; mph = 0; f0 = 100; pe = 0; pk = 0; pamt = 0; ie = 0; ik = 0; iamt = 0; ratio = 1;
   // slide (as on a 303 / the MD's slide trigs): the pitch glides from f0 to ft, the envelopes and FM keep going
-  sl = false; ft = 100; gc: number;
+  sl = false; ft = 100; gc: number; du = 0;
   toneE: Env; noiseE: Env; metalE: Env;
   noiseF: Svf; metalF: Svf;
   mph6 = [0, 0, 0, 0, 0, 0]; mdt = [0, 0, 0, 0, 0, 0];
@@ -134,6 +138,7 @@ class Voice {
     this.dg = p[DIST] / 127 * (p[DIST] / 127) * 20; // squared: low settings warm, only the top end turns square
     const v = p[VOL] / 127, a = (p[PAN] / 127) * Math.PI / 2;
     this.gl = v * Math.cos(a); this.gr = v * Math.sin(a);
+    this.du = p[DUCK] / 127 * DUCK_MAX;
     const ds = p[DEL] / 127, rs = p[REV] / 127;
     this.dl = this.gl * ds; this.dr = this.gr * ds; this.rl = this.gl * rs; this.rr = this.gr * rs;
   }
@@ -183,20 +188,22 @@ class Voice {
 export class MdEngine {
   private vs: Voice[] = [];
   private seed = 0x12345678;
-  constructor(fs: number) { for (let i = 0; i < 16; i++) this.vs.push(new Voice(fs)); }
-  trig(tr: number, m: number, p: ArrayLike<number>, slide = 0) { this.vs[tr].trig(m, p, slide); }
+  private dk: Env;
+  constructor(fs: number) { for (let i = 0; i < 16; i++) this.vs.push(new Voice(fs)); this.dk = new Env(fs); }
+  trig(tr: number, m: number, p: ArrayLike<number>, slide = 0) { this.vs[tr].trig(m, p, slide); if (tr == 0) this.dk.trig(1, DUCK_DEC); }
   // load a mono sample (at the engine rate) into a track for the ROM machine
   sample(tr: number, d: Float32Array) { const v = this.vs[tr]; v.slen = Math.min(d.length, MAXS); v.smp = d.slice(0, v.slen); v.son = 0; }
   // o: dry L/R, echo send L/R, gate box send L/R
   render(o: Float32Array[], off: number, n: number) {
     for (let i = 0; i < n; i++) {
       let L = 0, R = 0, DL = 0, DR = 0, RL = 0, RR = 0;
+      const dk = this.dk.tick();
       for (let t = 0; t < 16; t++) {
         let s = this.seed;
         s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
         this.seed = s;
-        const v = this.vs[t], x = v.tick((s >>> 0) / 4294967296 * 2 - 1);
-        L += x * v.gl; R += x * v.gr; DL += x * v.dl; DR += x * v.dr; RL += x * v.rl; RR += x * v.rr;
+        const v = this.vs[t], x = v.tick((s >>> 0) / 4294967296 * 2 - 1), d = x * (1 - v.du * dk);
+        L += d * v.gl; R += d * v.gr; DL += d * v.dl; DR += d * v.dr; RL += d * v.rl; RR += d * v.rr;
       }
       o[0][off + i] = L; o[1][off + i] = R; o[2][off + i] = DL; o[3][off + i] = DR; o[4][off + i] = RL; o[5][off + i] = RR;
     }

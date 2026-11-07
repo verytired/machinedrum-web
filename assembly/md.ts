@@ -1,7 +1,8 @@
 // AssemblyScript port of src/dsp/md.ts. Keep the two in sync; src/dsp/md.test.ts renders both from the
 // same hits and checks they match. --runtime stub: everything is allocated in init(), never after.
 
-const AMD = 8, AMF = 9, EQF = 10, EQG = 11, FLTF = 12, FLTW = 13, FLTQ = 14, SRR = 15, DIST = 16, VOL = 17, PAN = 18, DEL = 19, REV = 20;
+const AMD = 8, AMF = 9, EQF = 10, EQG = 11, FLTF = 12, FLTW = 13, FLTQ = 14, SRR = 15, DIST = 16, VOL = 17, PAN = 18, DEL = 19, REV = 20, DUCK = 21;
+const DUCK_DEC: f64 = 1.0, DUCK_MAX: f64 = 0.9;
 const TAU: f64 = 2 * Math.PI;
 const LN1000: f64 = 6.907755278982137;
 const ATTACK: f64 = 0.0003;
@@ -64,7 +65,7 @@ class Voice {
   mph6: StaticArray<f64> = new StaticArray<f64>(6); mdt: StaticArray<f64> = new StaticArray<f64>(6);
   imp: f64 = 0; nb: f64 = 0; bc: f64 = 0; cdec: f64 = 0.1;
   smp: StaticArray<f32> = new StaticArray<f32>(MAXS); slen: i32 = 0; sp: f64 = 0; sd: f64 = 0; se: f64 = 0; son: i32 = 0; smpE: Env;
-  amd: f64 = 0; amf: f64 = 1; amph: f64 = 0; eq: Peq; hp: Svf; lp: Svf; sk: f64 = 1; sc: f64 = 0; sh: f64 = 0; dg: f64 = 0; gl: f64 = 0; gr: f64 = 0; dl: f64 = 0; dr: f64 = 0; rl: f64 = 0; rr: f64 = 0;
+  amd: f64 = 0; amf: f64 = 1; amph: f64 = 0; eq: Peq; hp: Svf; lp: Svf; sk: f64 = 1; sc: f64 = 0; sh: f64 = 0; dg: f64 = 0; gl: f64 = 0; gr: f64 = 0; dl: f64 = 0; dr: f64 = 0; rl: f64 = 0; rr: f64 = 0; du: f64 = 0;
   fs: f64;
 
   constructor(fs: f64) {
@@ -125,6 +126,7 @@ class Voice {
     this.dg = p[DIST] / 127 * (p[DIST] / 127) * 20; // squared: low settings warm, only the top end turns square
     const v = p[VOL] / 127, a = (p[PAN] / 127) * Math.PI / 2;
     this.gl = v * Math.cos(a); this.gr = v * Math.sin(a);
+    this.du = p[DUCK] / 127 * DUCK_MAX;
     const ds = p[DEL] / 127, rs = p[REV] / 127;
     this.dl = this.gl * ds; this.dr = this.gr * ds; this.rl = this.gl * rs; this.rr = this.gr * rs;
   }
@@ -175,11 +177,12 @@ const out = new StaticArray<f32>(128 * 6); // channel k at k * 128: dry L/R, ech
 const par = new StaticArray<f64>(24);
 const vs = new Array<Voice>(0);
 let seed: u32 = 0x12345678;
+let dk: Env | null = null;
 
-export function init(fs: f64): void { for (let i = 0; i < 16; i++) vs.push(new Voice(fs)); }
+export function init(fs: f64): void { for (let i = 0; i < 16; i++) vs.push(new Voice(fs)); dk = new Env(fs); }
 export function outPtr(): usize { return changetype<usize>(out); }
 export function parPtr(): usize { return changetype<usize>(par); }
-export function trig(tr: i32, m: i32, slide: i32): void { unchecked(vs[tr]).trig(m, par, slide); }
+export function trig(tr: i32, m: i32, slide: i32): void { unchecked(vs[tr]).trig(m, par, slide); if (tr == 0) dk!.trig(1, DUCK_DEC); }
 // ROM sample: JS writes up to MAXS floats at smpPtr(tr), then calls smpLen(tr, n)
 export function smpPtr(tr: i32): usize { return changetype<usize>(unchecked(vs[tr]).smp); }
 export function smpLen(tr: i32, n: i32): void { const v = unchecked(vs[tr]); v.slen = min(n, MAXS); v.son = 0; }
@@ -187,12 +190,13 @@ export function smpLen(tr: i32, n: i32): void { const v = unchecked(vs[tr]); v.s
 export function render(n: i32): void {
   for (let i = 0; i < n; i++) {
     let L: f64 = 0, R: f64 = 0, DL: f64 = 0, DR: f64 = 0, RL: f64 = 0, RR: f64 = 0;
+    const g = dk!.tick();
     for (let t = 0; t < 16; t++) {
       let s = seed;
       s ^= s << 13; s ^= s >> 17; s ^= s << 5;
       seed = s;
-      const v = unchecked(vs[t]), x = v.tick(<f64>s / 4294967296 * 2 - 1);
-      L += x * v.gl; R += x * v.gr; DL += x * v.dl; DR += x * v.dr; RL += x * v.rl; RR += x * v.rr;
+      const v = unchecked(vs[t]), x = v.tick(<f64>s / 4294967296 * 2 - 1), d = x * (1 - v.du * g);
+      L += d * v.gl; R += d * v.gr; DL += d * v.dl; DR += d * v.dr; RL += d * v.rl; RR += d * v.rr;
     }
     out[i] = <f32>L; out[128 + i] = <f32>R; out[256 + i] = <f32>DL; out[384 + i] = <f32>DR; out[512 + i] = <f32>RL; out[640 + i] = <f32>RR;
   }

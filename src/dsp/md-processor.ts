@@ -2,6 +2,7 @@
 // Splits each render block at hit boundaries, like AfterBirth's tr606-processor.ts
 import { MdEngine, NPAR, NOUT, MAXS } from './md';
 import { MnmEngine } from './mnm';
+import { Limiter } from '../master';
 
 export type HitMsg = { t: number; tr: number; m: number; p: number[]; s?: number }; // s: slide
 export type FlushMsg = { k: 'flush' };
@@ -70,3 +71,16 @@ class MdProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor('md', MdProcessor);
+
+// the master end stage (master.ts), 2 in / 2 out; port message = the CLIP setting
+class LimProcessor extends AudioWorkletProcessor {
+  private lim = new Limiter(sampleRate);
+  constructor() { super(); this.port.onmessage = (ev: MessageEvent<number>) => this.lim.setClip(ev.data); }
+  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    const [l, r] = outputs[0], i = inputs[0];
+    if (i.length) { l.set(i[0]); r.set(i[1] ?? i[0]); } else { l.fill(0); r.fill(0); }
+    this.lim.process(l, r);
+    return true;
+  }
+}
+registerProcessor('lim', LimProcessor as never);

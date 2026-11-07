@@ -3,12 +3,12 @@
 // Same shape as MdEngine (trig / render to 6 outs) so md-processor.ts and the master FX take it unchanged.
 // Every parameter is 0-127 and latched at the trig; p[NOTE] is the MIDI note, p[GATE] the gate in seconds.
 // ponytail: TS only, no AssemblyScript twin like md.ts; add one if 6 tracks in JS ever cost too much CPU
-import { TAU, LP, HP, ex, coef, blep, Svf } from './md';
+import { TAU, LP, HP, ex, coef, blep, Svf, Env, DUCK_DEC, DUCK_MAX } from './md';
 
 export const MNPAR = 32;
 export const ATK = 8, DEC = 9, SUS = 10, REL = 11, LEN = 12, DIST = 13, VOL = 14, PAN = 15;
 export const BASE = 16, WDTH = 17, Q = 18, FENV = 19, FATK = 20, FDEC = 21, DEL = 22, REV = 23;
-export const SPD = 24, DEP = 25, SHP = 26, DEST = 27;
+export const SPD = 24, DEP = 25, SHP = 26, DEST = 27, DUCK = 28; // DUCK: as on the MD tracks, keyed by the MD's BD track
 export const NOTE = 32, GATE = 33;
 const SWAVE = 0; // 1 = FM
 
@@ -20,7 +20,7 @@ class Voice {
   // filter: HP at BASE, LP at BASE * WDTH, both moved by an AD envelope (FENV around 64)
   hp: Svf; lp: Svf; fb0 = 100; fw = 10; fq = 1; famt = 0; fe = 0; fai = 0; fdk = 1; fst = 0; fc = 0;
   lph = 0; lpi = 0; ldep = 0; lshp = 0; ldst = 0;
-  dg = 0; gl = 0; gr = 0; dl = 0; dr = 0; rl = 0; rr = 0;
+  dg = 0; gl = 0; gr = 0; dl = 0; dr = 0; rl = 0; rr = 0; du = 0;
   constructor(private fs: number) { this.hp = new Svf(fs); this.lp = new Svf(fs); }
 
   trig(m: number, p: ArrayLike<number>) {
@@ -35,7 +35,7 @@ class Voice {
     this.lph = 0; this.lpi = ex(p[SPD], 0.05, 30) / fs; this.ldep = p[DEP] / 127; this.lshp = p[SHP] >> 5; this.ldst = p[DEST] >> 5;
     this.dg = p[DIST] / 127 * (p[DIST] / 127) * 20;
     const v = p[VOL] / 127, a = (p[PAN] / 127) * Math.PI / 2;
-    this.gl = v * Math.cos(a); this.gr = v * Math.sin(a);
+    this.gl = v * Math.cos(a); this.gr = v * Math.sin(a); this.du = p[DUCK] / 127 * DUCK_MAX;
     const ds = p[DEL] / 127, rs = p[REV] / 127;
     this.dl = this.gl * ds; this.dr = this.gr * ds; this.rl = this.gl * rs; this.rr = this.gr * rs;
   }
@@ -88,18 +88,21 @@ class Voice {
 export class MnmEngine {
   private vs: Voice[] = [];
   private seed = 0x2468ace1;
-  constructor(fs: number) { for (let i = 0; i < 6; i++) this.vs.push(new Voice(fs)); }
-  trig(tr: number, m: number, p: ArrayLike<number>) { this.vs[tr].trig(m, p); }
+  private dk: Env;
+  constructor(fs: number) { for (let i = 0; i < 6; i++) this.vs.push(new Voice(fs)); this.dk = new Env(fs); }
+  // tr -1: the MD's BD track was hit (the duck key), not a note
+  trig(tr: number, m: number, p: ArrayLike<number>) { if (tr < 0) this.dk.trig(1, DUCK_DEC); else this.vs[tr].trig(m, p); }
   sample() { /* no ROM machine */ }
   render(o: Float32Array[], off: number, n: number) {
     for (let i = 0; i < n; i++) {
       let L = 0, R = 0, DL = 0, DR = 0, RL = 0, RR = 0;
+      const dk = this.dk.tick();
       for (let t = 0; t < 6; t++) {
         let s = this.seed;
         s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
         this.seed = s;
-        const v = this.vs[t], x = v.tick((s >>> 0) / 4294967296 * 2 - 1);
-        L += x * v.gl; R += x * v.gr; DL += x * v.dl; DR += x * v.dr; RL += x * v.rl; RR += x * v.rr;
+        const v = this.vs[t], x = v.tick((s >>> 0) / 4294967296 * 2 - 1), d = x * (1 - v.du * dk);
+        L += d * v.gl; R += d * v.gr; DL += d * v.dl; DR += d * v.dr; RL += d * v.rl; RR += d * v.rr;
       }
       o[0][off + i] = L; o[1][off + i] = R; o[2][off + i] = DL; o[3][off + i] = DR; o[4][off + i] = RL; o[5][off + i] = RR;
     }

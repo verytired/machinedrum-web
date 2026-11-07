@@ -24,7 +24,7 @@ export const MACHINES: Machine[] = [
 
 // Encoder pages: SYNTH = the machine's 8, then the track chain (– = not implemented yet)
 export const FX_LABELS = ['AMD', 'AMF', 'EQF', 'EQG', 'FLTF', 'FLTW', 'FLTQ', 'SRR'];
-export const ROUTE_LABELS = ['DIST', 'VOL', 'PAN', 'DEL', 'REV', '', '', ''];
+export const ROUTE_LABELS = ['DIST', 'VOL', 'PAN', 'DEL', 'REV', 'DUCK', '', '']; // DUCK: sidechain from the BD track (md.ts)
 const TRACK_DEFS = [0, 64, 64, 64, 0, 127, 0, 0, 0, 100, 64, 0, 0, 0, 0, 0];
 
 export const TRACKS = 'BD SD HT MT LT CP RS CB CH OH RC CC M1 M2 M3 M4'.split(' ');

@@ -3,8 +3,12 @@
 // impulse response is noise held flat and then cut off (80s gated snare).
 export const ECHO_LABELS = ['TIME', 'FB', 'FILF', 'FILW', '', '', '', 'LEV'];
 export const GATE_LABELS = ['ATCK', 'HOLD', 'DEC', 'HP', 'LP', '', '', 'LEV'];
-export interface Fx { echo: number[]; gate: number[] }
-export const defaultFx = (): Fx => ({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100] });
+// DYNAMIX: the master end stage (master.ts). CLIP = soft clip drive into the limiter, 0 = off
+export const DYN_LABELS = ['CLIP', '', '', '', '', '', '', ''];
+export interface Fx { echo: number[]; gate: number[]; dyn?: number[] } // dyn: missing in older saves and the factory songs
+export const defaultFx = (): Fx => ({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100], dyn: [0, 0, 0, 0, 0, 0, 0, 0] });
+export const dynOf = (fx: Fx) => (fx.dyn ??= defaultFx().dyn!);
+export const clipOf = (fx: Fx) => fx.dyn?.[0] ?? 0;
 
 const ex = (v: number, lo: number, hi: number) => lo * Math.pow(hi / lo, v / 127);
 export const echoSteps = (time: number) => 1 + Math.floor(time / 8); // 1-16 sixteenths

@@ -11,7 +11,7 @@ const pad8 = <T,>(a: T[], f: T) => a.concat(Array(8).fill(f)).slice(0, 8);
 const M = (name: string, labels: string, defs: number[]): Machine => ({ name, labels: pad8(labels.split(' '), ''), defs: pad8(defs, 0) });
 const MACHINES = [M('SWAVE', 'WAV PW DET OSC2 SUB NOIS', [0, 0, 20, 40, 30, 0]), M('FM', 'RAT IDX IDEC FB', [16, 40, 50, 0])];
 const PAGES = ['SYNTH', 'AMP', 'FILTER', 'LFO'];
-const PAGE_LABELS = ['', 'ATK DEC SUS REL LEN DIST VOL PAN', 'BASE WDTH Q FENV FATK FDEC DEL REV', 'SPD DEP SHP DEST'].map(s => pad8(s.split(' '), ''));
+const PAGE_LABELS = ['', 'ATK DEC SUS REL LEN DIST VOL PAN', 'BASE WDTH Q FENV FATK FDEC DEL REV', 'SPD DEP SHP DEST DUCK'].map(s => pad8(s.split(' '), ''));
 //                 AMP                              FILTER                            LFO
 const TRACK_DEFS = [0, 60, 60, 40, 3, 0, 90, 64, 0, 90, 20, 90, 0, 50, 0, 0, 40, 0, 0, 0, 0, 0, 0, 0];
 const NAMES = 'C C# D D# E F F# G G# A A# B'.split(' ');

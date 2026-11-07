@@ -1,5 +1,5 @@
 import { $, numbox, encoder, drawEnc } from './dom';
-import { masterFx, defaultFx, ECHO_LABELS, GATE_LABELS } from './fx';
+import { masterFx, defaultFx, dynOf, clipOf, ECHO_LABELS, GATE_LABELS, DYN_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, micro, defaultState, stepParams, type State, type Pat } from './machines';
 import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
 import { songState } from './bars';
@@ -54,7 +54,8 @@ let msg = '', cur = 0, page = 0, held = -1, heldEdited = false, latched = false,
 
 // ---- audio ----
 let fx: ReturnType<typeof masterFx> | undefined;
-const applyFx = () => fx?.set(st.fx, 60 / tempo.value / 4);
+let limNode: AudioWorkletNode | undefined;
+const applyFx = () => { fx?.set(st.fx, 60 / tempo.value / 4); limNode?.port.postMessage(clipOf(st.fx)); };
 let ctx: AudioContext | undefined, node: AudioWorkletNode | undefined, out: GainNode | undefined, engine = '';
 let ready: Promise<void> | undefined;
 async function ensureAudio() {
@@ -66,8 +67,8 @@ async function ensureAudio() {
     node = new AudioWorkletNode(ctx, 'md', { numberOfInputs: 0, numberOfOutputs: 3, outputChannelCount: [2, 2, 2], processorOptions: { wasm } });
     node.port.onmessage = e => { if (e.data.k === 'engine') { engine = e.data.name.toUpperCase(); draw(); } };
     out = new GainNode(ctx, { gain: level / 127 });
-    // master limiter: 16 tracks landing on one step add up past full scale
-    const lim = new DynamicsCompressorNode(ctx, { threshold: -3, knee: 0, ratio: 20, attack: 0.002, release: 0.1 });
+    // master end stage (master.ts): soft clip + look-ahead limiter at -1 dBFS, the same code as EXP WAV
+    const lim = limNode = new AudioWorkletNode(ctx, 'lim', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
     node.connect(out, 0).connect(lim).connect(ctx.destination);
     fx = masterFx(ctx, out);
     node.connect(fx.echoIn, 1); node.connect(fx.gateIn, 2);
@@ -82,7 +83,10 @@ async function ensureAudio() {
   await ctx!.resume();
 }
 mnm.ensure = ensureAudio;
-const hit = (tr: number, t: number, p: number[], s = 0) => node!.port.postMessage({ t, tr, m: st.kit[tr].m, p, s } satisfies HitMsg);
+const hit = (tr: number, t: number, p: number[], s = 0) => {
+  node!.port.postMessage({ t, tr, m: st.kit[tr].m, p, s } satisfies HitMsg);
+  if (tr === 0) mnm.node?.port.postMessage({ t, tr: -1, m: 0, p: [] } satisfies HitMsg); // the MNM's duck key
+};
 
 // ---- sequencer (lookahead scheduler, as in AfterBirth's transport.ts) ----
 let playing = false, nextT = 0, step = 0, n16 = 0, timer: ReturnType<typeof setInterval> | undefined;
@@ -142,11 +146,11 @@ const tempo = numbox($('tempo'), 30, 300, st.tempo, v => { st.tempo = v; save();
 
 // ---- encoders ----
 // Each encoder edits the selected track's param on the current page; while a trig is held it writes a p-lock
-// Pages 3/4 are the master effects: global, not lockable
-const PAGES = ['SYNTHESIS', 'EFFECTS', 'ROUTING', 'RHYTHM ECHO', 'GATE BOX'];
+// Pages 3-5 are the master effects: global, not lockable
+const PAGES = ['SYNTHESIS', 'EFFECTS', 'ROUTING', 'RHYTHM ECHO', 'GATE BOX', 'DYNAMIX'];
 const idx = (k: number) => page < 3 ? page * 8 + k : k;
-const labels = () => [MACHINES[st.kit[cur].m].labels, FX_LABELS, ROUTE_LABELS, ECHO_LABELS, GATE_LABELS][page];
-const arr = () => page < 3 ? st.kit[cur].p : page === 3 ? st.fx.echo : st.fx.gate;
+const labels = () => [MACHINES[st.kit[cur].m].labels, FX_LABELS, ROUTE_LABELS, ECHO_LABELS, GATE_LABELS, DYN_LABELS][page];
+const arr = () => page < 3 ? st.kit[cur].p : page === 3 ? st.fx.echo : page === 4 ? st.fx.gate : dynOf(st.fx);
 const lockOf = (k: number) => held >= 0 && page < 3 ? st.lock[cur][held]?.[idx(k)] : undefined;
 const val = (k: number) => lockOf(k) ?? arr()[idx(k)];
 function setVal(k: number, v: number) {
@@ -159,7 +163,7 @@ function setVal(k: number, v: number) {
   if (page >= 3) applyFx();
   save(); draw();
 }
-const defVal = (k: number) => page === 0 ? MACHINES[st.kit[cur].m].defs[k] : page < 3 ? defaultState().kit[0].p[idx(k)] : (page === 3 ? defaultFx().echo : defaultFx().gate)[k];
+const defVal = (k: number) => page === 0 ? MACHINES[st.kit[cur].m].defs[k] : page < 3 ? defaultState().kit[0].p[idx(k)] : (page === 3 ? defaultFx().echo : page === 4 ? defaultFx().gate : defaultFx().dyn!)[k];
 
 const encs = Array.from({ length: 8 }, (_, k) => {
   const lab = document.createElement('label'), enc = document.createElement('div');
@@ -319,15 +323,21 @@ importer.onchange = async () => {
 $('import').onclick = () => importer.click();
 
 // ---- EXP WAV: the song rendered off line (song mode's rows, the master effects, LEVEL and the limiter) ----
-$('wav').onclick = async () => {
+// The meter report goes to the LCD and the console ("[render] {...}", also window.md.report); shift-click = also
+// a WAV per sounding track (stems)
+const download = (blob: Blob, name: string) => { const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name }); a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 60000); };
+$('wav').onclick = async (ev: MouseEvent) => {
   if (!st.song.length) { flash('WAV: MAKE A SONG FIRST (SONG MODE)'); return; }
   msg = 'RENDERING...'; draw(); await new Promise(r => setTimeout(r, 30)); // let the LCD show it before the CPU is busy
   try {
     stash(); await restored;
     const smp = await Promise.all(saved.map((x, tr) => x && st.kit[tr].m === ROM ? pcm(x).then(s => s.d).catch(() => undefined) : undefined));
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(await renderWav(st, smp, level, mnm.state())), download: `machinedrum-${new Date().toISOString().slice(0, 10)}.wav` });
-    a.click(); URL.revokeObjectURL(a.href);
-    flash('WAV EXPORTED');
+    const base = `machinedrum-${new Date().toISOString().slice(0, 10)}`, r = await renderWav(st, smp, level, mnm.state(), ev.shiftKey);
+    download(r.wav, base + '.wav');
+    for (const s of r.stems ?? []) { await new Promise(ok => setTimeout(ok, 400)); download(s.wav, `${base}-${s.name}.wav`); } // Chrome drops a burst of ~10+
+    console.log('[render]', JSON.stringify(r.report));
+    Object.assign(window, { mdReport: r.report }); // for scripted exports
+    flash(`WAV ${r.report.lufs} LUFS ${r.report.tp} DBTP`);
   } catch (e) { flash('WAV FAILED: ' + (e as Error).message.toUpperCase().slice(0, 30)); }
 };
 

@@ -227,13 +227,13 @@ test('CLEAR SONG deletes every song row (after a confirm)', async ({ page }) => 
   await expect(page.locator('#song tr')).toHaveCount(0);
 });
 
-test('RESET FX puts the echo and gate box back to their defaults', async ({ page }) => {
+test('RESET FX puts the echo, gate box and DYNAMIX back to their defaults', async ({ page }) => {
   await page.evaluate(s => { const x = JSON.parse(s); x.fx = { echo: [1, 2, 3, 4, 0, 0, 0, 5], gate: [6, 7, 8, 9, 10, 0, 0, 11] }; localStorage.setItem('md-web-v1', JSON.stringify(x)); }, blank);
   await page.reload();
   await page.click('#fxreset');
   await expect(page.locator('#lstat')).toHaveText('FX RESET');
   const fx = await page.evaluate(() => JSON.parse(localStorage.getItem('md-web-v1')!).fx);
-  expect(fx).toEqual({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100] });
+  expect(fx).toEqual({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100], dyn: [0, 0, 0, 0, 0, 0, 0, 0] });
 });
 
 ftest('?factory=N resets to factory song N; SONG + PLAY plays it', async ({ page }) => {
@@ -248,19 +248,20 @@ ftest('?factory=N resets to factory song N; SONG + PLAY plays it', async ({ page
   expect(await outPeak(page, 1500)).toBeGreaterThan(0.05);
 });
 
-test('EXP WAV renders the song to a 16-bit stereo WAV', async ({ page }) => {
+test('EXP WAV renders the song to a 24-bit stereo WAV and meters it', async ({ page }) => {
   await page.click('#songkey');
   await page.click('#addrow');                            // one row: the default pattern, once
   const dl = page.waitForEvent('download', { timeout: 120000 });
   await page.click('#wav');
   const b = (await import('fs')).readFileSync(await (await dl).path());
   expect(b.toString('ascii', 0, 4) + b.toString('ascii', 8, 12)).toBe('RIFFWAVE');
-  expect([b.readUInt16LE(22), b.readUInt32LE(24), b.readUInt16LE(34)]).toEqual([2, 44100, 16]);
-  const secs = b.readUInt32LE(40) / 4 / 44100;
+  expect([b.readUInt16LE(22), b.readUInt32LE(24), b.readUInt16LE(34)]).toEqual([2, 44100, 24]);
+  const secs = b.readUInt32LE(40) / 6 / 44100;
   expect(secs).toBeCloseTo(16 * 60 / 125 / 4 + 3, 1);     // one bar at 125 BPM plus a 3 s tail
-  let pk = 0; for (let i = 44; i < 44 + 44100 * 4; i += 2) pk = Math.max(pk, Math.abs(b.readInt16LE(i)));
-  expect(pk).toBeGreaterThan(3000);
-  await expect(page.locator('#lstat')).toHaveText('WAV EXPORTED');
+  let pk = 0; for (let i = 44; i < 44 + 44100 * 6; i += 3) pk = Math.max(pk, Math.abs(b.readIntLE(i, 3)));
+  expect(pk / 8388607).toBeGreaterThan(0.1);
+  expect(pk / 8388607).toBeLessThanOrEqual(Math.pow(10, -1 / 20) + 1e-6); // the limiter's ceiling
+  await expect(page.locator('#lstat')).toHaveText(/^WAV -\d+(\.\d)? LUFS -?\d+(\.\d)? DBTP$/);
 });
 
 ftest('VOICE menu puts a built-in voice on a ROM track (hidden on other machines)', async ({ page }) => {

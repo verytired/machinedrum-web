@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { MdEngine, NPAR, NOUT, VOL, FLTW, FLTQ, DIST, SRR, AMD, DEL, REV } from './md';
+import { MdEngine, NPAR, NOUT, VOL, FLTW, FLTQ, DIST, SRR, AMD, DEL, REV, DUCK } from './md';
 import { MACHINES, SLIDE, trackFor, defaultState, stepParams } from '../machines';
 import { applyBar, songState } from '../bars';
 import { FACTORY } from '../presets';
@@ -55,8 +55,9 @@ describe('MD engine', () => {
   it('WASM matches the TS engine, every machine plus locked track params', () => {
     const s = SR / 8, hits: Hit[] = [];
     MACHINES.forEach((_, m) => hits.push([m * s, m, m, trackFor(m).p]));
-    const locked = trackFor(8).p; locked[FLTW] = 60; locked[DIST] = 80; locked[SRR] = 20; locked[AMD] = 70; locked[DEL] = 90; locked[REV] = 50;
+    const locked = trackFor(8).p; locked[FLTW] = 60; locked[DIST] = 80; locked[SRR] = 20; locked[AMD] = 70; locked[DEL] = 90; locked[REV] = 50; locked[DUCK] = 100; // ducked by the BD-track hit at 0 and the one below
     hits.push([12 * s + 5, 12, 8, locked]);
+    hits.push([12 * s + 900, 0, 3, trackFor(3).p]); // BD track again: the duck key
     hits.push([13 * s, 7, 7, trackFor(7).p]); // retrigger mid-tail
     const rev = trackFor(12).p; rev[0] = 71; rev[2] = 100; rev[3] = 10; hits.push([14 * s + 3, 13, 12, rev]); // ROM reversed, pitched up
     // a 303-style slide on EFM-BD: three notes, the 2nd and 3rd glide in without a retrigger
@@ -85,6 +86,18 @@ describe('MD engine', () => {
     const [b1, a1] = env(1), [b0, a0] = env(0);
     expect(a0 / b0).toBeGreaterThan(1.3);   // a normal trig attacks again
     expect(a1 / b1).toBeLessThan(1.05);     // a slide carries on from where the note was
+  });
+
+  it('DUCK: a BD-track hit pushes a ducked track down, then it recovers; the MNM follows the same key', () => {
+    const pad = trackFor(0).p; pad[1] = 127; pad[2] = 0;   // GND-SN: a long sine
+    const rms = (x: Float32Array, a: number, b: number) => { let e = 0; for (let i = a; i < b; i++) e += x[i] * x[i]; return Math.sqrt(e / (b - a)); };
+    const run = (duck: number) => { const p = pad.slice(); p[DUCK] = duck; return drive(js(), [[0, 12, 0, p], [SR / 2, 0, 3, Object.assign(trackFor(3).p.slice(), { [VOL]: 0 })]], SR)[0]; };
+    const dry = run(0), wet = run(127), w = SR / 50, at = SR / 2 + w;
+    expect(rms(wet, at, at + w) / rms(dry, at, at + w)).toBeLessThan(0.3);  // about -12 dB right after the kick
+    expect(rms(wet, SR - w, SR) / rms(dry, SR - w, SR)).toBeGreaterThan(0.9); // back by the end of the beat
+    const mp = Array(34).fill(0); mp[14] = 100; mp[28] = 127; mp[32] = 45; mp[33] = 1; mp[10] = 127; mp[17] = 127; mp[16] = 60; // SWAVE, held
+    const mn = (key: boolean) => { const e = new MnmEngine(SR), o = Array.from({ length: NOUT }, () => new Float32Array(SR)); e.trig(0, 0, mp); e.render(o, 0, SR / 2); if (key) e.trig(-1, 0, []); e.render(o, SR / 2, SR / 2); return o[0]; };
+    expect(rms(mn(true), at, at + w) / rms(mn(false), at, at + w)).toBeLessThan(0.3);
   });
 
   it('VOL 0 is silent', () => {
