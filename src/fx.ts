@@ -1,8 +1,9 @@
 // Master effects on native nodes, fed by the engine's send outputs (each track's DEL / REV).
 // RHYTHM ECHO: tempo-synced delay with a filtered feedback loop. GATE BOX: gated reverb = a convolver whose
-// impulse response is noise held flat and then cut off (80s gated snare).
+// impulse response is noise held flat and then cut off (80s gated snare); with TAIL up, a natural exponential
+// decay instead (room / plate), its highs dying faster with DAMP.
 export const ECHO_LABELS = ['TIME', 'FB', 'FILF', 'FILW', '', '', '', 'LEV'];
-export const GATE_LABELS = ['ATCK', 'HOLD', 'DEC', 'HP', 'LP', '', '', 'LEV'];
+export const GATE_LABELS = ['ATCK', 'HOLD', 'DEC', 'HP', 'LP', 'TAIL', 'DAMP', 'LEV'];
 // DYNAMIX: the master end stage (master.ts). CLIP = soft clip drive into the limiter, 0 = off;
 // GAIN = makeup gain into the clip / limiter, 0 to +18 dB (0 = unity); MONO = the side under 30-300 Hz cut (0 = off,
 // 76 = 120 Hz), so the low end is mono
@@ -23,12 +24,33 @@ export function seeded(seed: string | number): () => number {
 }
 
 // Gate box impulse response: attack ramp, flat hold, short release, then silence
-export function gateIR(fs: number, atck: number, hold: number, dec: number, rnd = Math.random): Float32Array<ArrayBuffer>[] {
+export function gateIR(fs: number, atck: number, hold: number, dec: number, rnd = Math.random, tail = 0, damp = 0): Float32Array<ArrayBuffer>[] {
+  if (tail > 0) return roomIR(fs, atck, hold, tail, damp, rnd);
   const a = Math.round(atck / 127 * 0.1 * fs), h = Math.round(hold / 127 * 0.5 * fs), d = Math.round(ex(dec, 0.005, 0.3) * fs);
   const n = a + h + d + 1, g = Math.sqrt(0.75 / ((a / 2 + h + d / 2 + 1) / fs * 1000)); // equal loudness across lengths
   return [0, 1].map(() => {
     const ch = new Float32Array(n);
     for (let i = 0; i < n - 1; i++) ch[i] = g * (rnd() * 2 - 1) * (i < a ? i / a : i < a + h ? 1 : 1 - (i - a - h) / d);
+    return ch;
+  });
+}
+
+// Room / plate: attack ramp, hold, then noise decaying by 60 dB over RT60 = 0.2-5 s (TAIL), through a one-pole
+// low-pass that closes as it decays (DAMP: from 16 kHz down, faster the higher). The same energy as a gate of ~0.75 s
+function roomIR(fs: number, atck: number, hold: number, tail: number, damp: number, rnd: () => number): Float32Array<ArrayBuffer>[] {
+  const a = Math.round(atck / 127 * 0.1 * fs), h = Math.round(hold / 127 * 0.5 * fs), rt = ex(tail, 0.2, 5), n = a + h + Math.round(rt * fs);
+  const k = Math.log(1000) / (rt * fs), dk = damp / 127 * 6 / rt;   // amplitude decay per sample; the cutoff's per second
+  return [0, 1].map(() => {
+    const ch = new Float32Array(n);
+    let y = 0, e = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i - a - h, env = i < a ? i / a : t < 0 ? 1 : Math.exp(-k * t);
+      const fc = 16000 * Math.exp(-dk * Math.max(0, t) / fs), c = 1 - Math.exp(-2 * Math.PI * Math.min(fc, fs / 2.5) / fs);
+      y += c * ((rnd() * 2 - 1) - y);
+      ch[i] = y * env; e += ch[i] * ch[i];
+    }
+    const g = Math.sqrt(0.25 * fs / 1000 / Math.max(e, 1e-12));
+    for (let i = 0; i < n; i++) ch[i] *= g;
     return ch;
   });
 }
@@ -53,13 +75,13 @@ export function masterFx(ctx: BaseAudioContext, dest: AudioNode) {
       fb.gain.value = f / 127 * 0.95;
       ehp.frequency.value = ex(ff, 20, 5000); elp.frequency.value = ex(fw, 500, 20000);
       eOut.gain.value = lev / 127;
-      const [at, hold, dec, gh, gl, , , glev] = fx.gate;
+      const [at, hold, dec, gh, gl, tail = 0, damp = 0, glev] = fx.gate;
       ghp.frequency.value = ex(gh, 20, 5000); glp.frequency.value = ex(gl, 500, 20000);
       gOut.gain.value = glev / 127;
-      const key = `${at},${hold},${dec}`;
+      const key = tail > 0 ? `${at},${hold},${dec},${tail},${damp}` : `${at},${hold},${dec}`;   // the old key keeps the gate's seed
       if (key !== irKey) {
         irKey = key;
-        const ir = gateIR(ctx.sampleRate, at, hold, dec, seeded(key)), buf = ctx.createBuffer(2, ir[0].length, ctx.sampleRate);
+        const ir = gateIR(ctx.sampleRate, at, hold, dec, seeded(key), tail, damp), buf = ctx.createBuffer(2, ir[0].length, ctx.sampleRate);
         ir.forEach((c, i) => buf.copyToChannel(c, i));
         conv.buffer = buf;
       }

@@ -81,3 +81,18 @@ test('EQ: BASS +6 dB at 40 Hz, MUD -6 dB at 300 Hz, AIR +6 dB at 16 kHz at 127, 
   expect(20 * Math.log10(rms / (0.5 / Math.SQRT2))).toBeCloseTo(-7.5, 0);
   expect(gain(1000, [127, 0, 0, 0])).toBeCloseTo(0, 1);   // -29 dB RMS: under -24
 });
+
+test('reverb TAIL: an exponential tail 60 dB down by RT60, the gate energy; DAMP darkens the tail; TAIL 0 = the gate as before', async () => {
+  const { gateIR, seeded } = await import('./fx');
+  const fs = 44100, e = (a: Float32Array) => a.reduce((s, v) => s + v * v, 0);
+  const [r] = gateIR(fs, 0, 0, 20, seeded('x'), 64);               // RT60 = 0.2 * 25^(64/127) ~ 1.01 s
+  expect(r.length / fs).toBeCloseTo(0.2 * Math.pow(25, 64 / 127), 2);
+  const rms = (a: Float32Array, at: number) => Math.sqrt(e(a.subarray(Math.round(at * fs), Math.round(at * fs) + 2205)) / 2205);
+  expect(20 * Math.log10(rms(r, 0.5) / rms(r, 0))).toBeCloseTo(-60 * 0.5 / (r.length / fs), -1);   // -60 dB per RT60: ~-30 at 0.5 s
+  const [g] = gateIR(fs, 0, 40, 20, seeded('y'));
+  expect(e(r) / e(g)).toBeGreaterThan(0.8); expect(e(r) / e(g)).toBeLessThan(1.25);
+  // DAMP: the tail's sample-to-sample difference (its highs) smaller against its level
+  const hf = (a: Float32Array) => { const s = a.subarray(Math.round(0.4 * fs), Math.round(0.6 * fs)); let d = 0; for (let i = 1; i < s.length; i++) d += (s[i] - s[i - 1]) ** 2; return d / e(s); };
+  expect(hf(gateIR(fs, 0, 0, 20, seeded('x'), 64, 127)[0])).toBeLessThan(hf(r) * 0.3);
+  expect(gateIR(fs, 0, 40, 20, seeded('z'), 0, 99)[0]).toEqual(gateIR(fs, 0, 40, 20, seeded('z'))[0]);
+});
