@@ -1,5 +1,5 @@
 // Master bus end stage and meter, shared by the live worklet (md-processor.ts) and EXP WAV (render.ts).
-// Limiter: MONO (side high-passed) -> makeup GAIN -> soft clip (CLIP, 0 = off) -> stereo-linked look-ahead brickwall at CEIL. The gain is the minimum of the
+// Limiter: MONO (side high-passed) -> EQ (BASS / MUD / AIR) -> glue COMP -> makeup GAIN -> soft clip (CLIP, 0 = off) -> stereo-linked look-ahead brickwall at CEIL. The gain is the minimum of the
 // needed gains over the look-ahead window, released, then box-averaged over the same window, so it is down to a
 // peak's gain by the time that peak leaves the delay line: no overs, no attack click. The peaks are true peaks: each
 // sample and the three 4x points after it (the meter's interpolation), so a hard-driven master stays under CEIL in dBTP too.
@@ -14,6 +14,7 @@ export class Limiter {
   private th = new Float64Array(8 * TAPS); private tw = 0; // true-peak window: the last 2*TAPS samples per channel, doubled ring (L at 0, R at 4*TAPS)
   private box: Float64Array; private sum: number; private g = 1; private kr: number; private i = 0;
   private drive = 1; private knee = Infinity; private side: Chain | null = null; private mlo: Chain | null = null; private mhi: Chain | null = null; private fs: number; private monoV = 0;
+  private eq: [Chain, Chain] | null = null; private eqV = ''; private th0 = Infinity; private env = 0; private cg = 1; private ka = 0; private kd = 0;
   constructor(fs: number) {
     this.fs = fs;
     const n = this.n = Math.max(2, Math.round(LOOK * fs));
@@ -26,7 +27,17 @@ export class Limiter {
   // clip 0-127: up to +6 dB of drive into a tanh knee that starts lower the more it is turned up; gain 0-127: 0 to +18 dB
   // mono 0-127: 0 = off, else a Linkwitz-Riley crossover at 30-300 Hz: the side keeps only its high half (LR4 HP), the
   // mid goes through the crossover's all-pass (LR4 LP + HP), so above it the stereo image is untouched
-  set(clip: number, gain = 0, mono = 0) {
+  // comp 0-127: 0 = off, else 2:1 over a threshold of 0 to -24 dB (RMS, 10 ms attack / 150 ms release, stereo-linked);
+  // bass / mud / air 0-127: 0 = flat, up to +6 dB low shelf at 90 Hz / -6 dB bell at 300 Hz / +6 dB high shelf at 10 kHz
+  set(clip: number, gain = 0, mono = 0, comp = 0, bass = 0, mud = 0, air = 0) {
+    const e = [bass, mud, air].join();
+    if (e !== this.eqV) {
+      this.eqV = e;
+      const bq = (): Bq[] => [eqBq('ls', this.fs, 90, bass / 127 * 6, Math.SQRT1_2), eqBq('pk', this.fs, 300, -mud / 127 * 6, 1), eqBq('hs', this.fs, 10000, air / 127 * 6, Math.SQRT1_2)];
+      this.eq = bass || mud || air ? [new Chain(bq()), new Chain(bq())] : null;
+    }
+    this.th0 = comp > 0 ? Math.pow(10, -comp / 127 * 24 / 10) : Infinity;   // as a power
+    this.ka = Math.exp(-1 / (0.01 * this.fs)); this.kd = Math.exp(-1 / (0.15 * this.fs));
     if (mono !== this.monoV) {
       this.monoV = mono;
       const f = 30 * Math.pow(10, mono / 127), q = Math.SQRT1_2, lr = (t: 'lp' | 'hp') => mono > 0 ? new Chain([rbj(t, this.fs, f, q), rbj(t, this.fs, f, q)]) : null;
@@ -44,6 +55,14 @@ export class Limiter {
     for (let j = off; j < off + len; j++) {
       let xa = l[j], xb = r[j];
       if (this.side) { const m0 = (xa + xb) / 2, md = this.mlo!.tick(m0) + this.mhi!.tick(m0), sd = this.side.tick((xa - xb) / 2); xa = md + sd; xb = md - sd; }
+      if (this.eq) { xa = this.eq[0].tick(xa); xb = this.eq[1].tick(xb); }
+      if (this.th0 < Infinity) {
+        const p = Math.max(xa * xa, xb * xb);
+        this.env = p + (this.env - p) * this.ka;                                    // RMS over ~10 ms
+        const t = this.env > this.th0 ? Math.pow(this.th0 / this.env, 0.25) : 1;     // 2:1 = half the dB over: (power ratio)^(1/4)
+        this.cg = t + (this.cg - t) * (t < this.cg ? this.ka : this.kd);
+        xa *= this.cg; xb *= this.cg;
+      }
       const W = 2 * TAPS, th = this.th, h = this.tw;
       th[h] = th[h + W] = this.sat(xa); th[4 * TAPS + h] = th[4 * TAPS + h + W] = this.sat(xb); this.tw = (h + 1) % W;
       const s0 = this.tw, xl = th[s0 + TAPS - 1], xr = th[4 * TAPS + s0 + TAPS - 1], i = this.i; // the sample TAPS back
@@ -76,6 +95,14 @@ type Bq = [b0: number, b1: number, b2: number, a1: number, a2: number];
 const rbj = (type: 'lp' | 'hp', fs: number, f: number, q: number): Bq => {
   const w = 2 * Math.PI * f / fs, c = Math.cos(w), al = Math.sin(w) / (2 * q), k = type === 'lp' ? (1 - c) / 2 : (1 + c) / 2, a0 = 1 + al;
   return [k / a0, (type === 'lp' ? 1 - c : -(1 + c)) / a0, k / a0, -2 * c / a0, (1 - al) / a0];
+};
+// RBJ cookbook shelves / bell, gain in dB
+const eqBq = (type: 'ls' | 'hs' | 'pk', fs: number, f: number, g: number, q: number): Bq => {
+  const A = Math.pow(10, g / 40), w = 2 * Math.PI * f / fs, c = Math.cos(w), al = Math.sin(w) / (2 * q), s = 2 * Math.sqrt(A) * al;
+  const [b0, b1, b2, a0, a1, a2] = type === 'pk' ? [1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A]
+    : type === 'ls' ? [A * ((A + 1) - (A - 1) * c + s), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - s), (A + 1) + (A - 1) * c + s, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - s]
+    : [A * ((A + 1) + (A - 1) * c + s), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - s), (A + 1) - (A - 1) * c + s, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - s];
+  return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0];
 };
 // a cascade of biquads, one sample at a time (state: x1 x2 y1 y2 per stage)
 class Chain {

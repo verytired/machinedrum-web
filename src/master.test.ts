@@ -63,3 +63,21 @@ test('limiter: true peaks under the ceiling too, even driven hard (high tones, c
   lim.set(64, 80); lim.process(l, r);
   expect(measure(l.subarray(FS / 10), r.subarray(FS / 10), FS).tp).toBeLessThanOrEqual(-0.9);
 });
+
+test('EQ: BASS +6 dB at 40 Hz, MUD -6 dB at 300 Hz, AIR +6 dB at 16 kHz at 127, 2 kHz untouched; COMP 2:1 over -24 dB', () => {
+  const gain = (f: number, dyn: number[]) => {
+    const lim = new Limiter(FS), l = sine(f, 0.05, 1), r = l.slice(); lim.set(0, 0, 0, ...dyn); lim.process(l, r);
+    const rms = (a: Float32Array) => Math.sqrt(a.subarray(FS / 2).reduce((s, v) => s + v * v, 0) / (FS / 2));
+    return 20 * Math.log10(rms(l) / (0.05 / Math.SQRT2));
+  };
+  expect(gain(40, [0, 127, 0, 0])).toBeCloseTo(6, 0);
+  expect(gain(300, [0, 0, 127, 0])).toBeCloseTo(-6, 0);
+  expect(gain(16000, [0, 0, 0, 127])).toBeCloseTo(6, 0);
+  expect(Math.abs(gain(2000, [0, 127, 127, 127]))).toBeLessThan(0.3);
+  // a sine at -9 dB RMS (peak 0.5) is 15 dB over -24: 2:1 takes 7.5 dB off; under the threshold nothing changes
+  expect(gain(1000, [0, 0, 0, 0])).toBeCloseTo(0, 1);
+  const lim = new Limiter(FS), l = sine(1000, 0.5, 1), r = l.slice(); lim.set(0, 0, 0, 127); lim.process(l, r);
+  const rms = Math.sqrt(l.subarray(FS / 2).reduce((s, v) => s + v * v, 0) / (FS / 2));
+  expect(20 * Math.log10(rms / (0.5 / Math.SQRT2))).toBeCloseTo(-7.5, 0);
+  expect(gain(1000, [127, 0, 0, 0])).toBeCloseTo(0, 1);   // -29 dB RMS: under -24
+});
