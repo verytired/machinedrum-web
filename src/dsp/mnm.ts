@@ -10,10 +10,13 @@ export const ATK = 8, DEC = 9, SUS = 10, REL = 11, LEN = 12, DIST = 13, VOL = 14
 export const BASE = 16, WDTH = 17, Q = 18, FENV = 19, FATK = 20, FDEC = 21, DEL = 22, REV = 23;
 export const SPD = 24, DEP = 25, SHP = 26, DEST = 27, DUCK = 28; // DUCK: as on the MD tracks, keyed by the MD's BD track
 export const NOTE = 32, GATE = 33;
+// locks beyond the track's params: SLD = a slide trig (the pitch glides ~60 ms from the sounding note, no retrigger: the
+// envelopes, phases and LFO carry on, only the gate is renewed), ACC = an accent (+3 dB, the filter envelope 1.5 octaves harder)
+export const SLD = 34, ACC = 35;
 const SWAVE = 0; // 1 = FM
 
 class Voice {
-  ph = 0; ph2 = 0; sph = 0; mph = 0; fb = 0; f = 110;
+  ph = 0; ph2 = 0; sph = 0; mph = 0; fb = 0; f = 110; ft = 110; gk = 0;
   m = SWAVE; wav = 0; pw = 0.5; det = 1; o2 = 0; sub = 0; nz = 0; rat = 1; idx = 0; ie = 0; ik = 1; fbk = 0;
   // AMP: attack ramp, decay to sustain, release after the gate
   stage = 0; e = 0; ai = 0; dk = 1; sus = 0; rk = 1; gate = 0;
@@ -24,8 +27,12 @@ class Voice {
   constructor(private fs: number) { this.hp = new Svf(fs); this.lp = new Svf(fs); }
 
   trig(m: number, p: ArrayLike<number>) {
-    const fs = this.fs;
-    this.m = m; this.f = 440 * Math.pow(2, (p[NOTE] - 69) / 12);
+    const fs = this.fs, f = 440 * Math.pow(2, (p[NOTE] - 69) / 12);
+    if (p[SLD] > 0 && this.e > 1e-4 && m == this.m) {   // only a sounding note glides
+      this.ft = f; this.gk = coef(fs, 0.06); this.gate = Math.max(1, Math.round(p[GATE] * fs)); if (this.stage == 0) this.stage = 2;
+      return;
+    }
+    this.m = m; this.f = this.ft = f; this.gk = 0;
     if (m == SWAVE) { this.wav = p[0] / 127; this.pw = 0.5 - p[1] / 127 * 0.45; this.det = Math.pow(2, p[2] / 127 * 0.5 / 12); this.o2 = p[3] / 127; this.sub = p[4] / 127; this.nz = p[5] / 127; }
     else { this.rat = Math.max(0.5, Math.round(p[0] / 127 * 16) / 2); this.idx = p[1] / 127 * 10; this.ie = 1; this.ik = coef(fs, ex(p[2], 0.01, 4)); this.fbk = p[3] / 127 * 1.5; }
     this.stage = 1; this.ai = 1 / (ex(p[ATK], 0.001, 2) * fs); this.dk = coef(fs, ex(p[DEC], 0.01, 4));
@@ -34,7 +41,8 @@ class Voice {
     this.fe = 0; this.fst = 1; this.fai = 1 / (ex(p[FATK], 0.001, 2) * fs); this.fdk = coef(fs, ex(p[FDEC], 0.01, 4)); this.fc = 0;
     this.lph = 0; this.lpi = ex(p[SPD], 0.05, 30) / fs; this.ldep = p[DEP] / 127; this.lshp = p[SHP] >> 5; this.ldst = p[DEST] >> 5;
     this.dg = p[DIST] / 127 * (p[DIST] / 127) * 20;
-    const v = p[VOL] / 127, a = (p[PAN] / 127) * Math.PI / 2;
+    if (p[ACC] > 0) this.famt += 1.5;
+    const v = p[VOL] / 127 * (p[ACC] > 0 ? 1.41 : 1), a = (p[PAN] / 127) * Math.PI / 2;
     this.gl = v * Math.cos(a); this.gr = v * Math.sin(a); this.du = p[DUCK] / 127 * DUCK_MAX;
     const ds = p[DEL] / 127, rs = p[REV] / 127;
     this.dl = this.gl * ds; this.dr = this.gr * ds; this.rl = this.gl * rs; this.rr = this.gr * rs;
@@ -47,6 +55,7 @@ class Voice {
     const lp = this.lph, l = this.lshp == 0 ? Math.sin(TAU * lp) : this.lshp == 1 ? 1 - 4 * Math.abs(lp - 0.5) : this.lshp == 2 ? 1 - 2 * lp : lp < 0.5 ? 1 : -1;
     this.lph += this.lpi; if (this.lph >= 1) this.lph -= 1;
     const lv = l * this.ldep;
+    if (this.gk) this.f = this.ft + (this.f - this.ft) * this.gk;
     const f = this.ldst == 0 ? this.f * Math.pow(2, lv) : this.f, dt = Math.min(f / fs, 0.45);
     let x = 0;
     if (this.m == SWAVE) {
