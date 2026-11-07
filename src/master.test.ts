@@ -49,3 +49,10 @@ test('seeded: the same sequence for the same seed, a different one for another',
   expect(Math.min(...xs)).toBeGreaterThanOrEqual(0); expect(Math.max(...xs)).toBeLessThan(1);
   expect(gateIR(44100, 0, 40, 20, seeded('0,40,20'))[0]).toEqual(gateIR(44100, 0, 40, 20, seeded('0,40,20'))[0]);
 });
+
+test('MONO: the low end of a one-sided signal ends up in both channels, the highs stay where they were', () => {
+  const run = (f: number) => { const lim = new Limiter(FS), l = sine(f, 0.3, 1), r = new Float32Array(FS); lim.set(0, 0, 76); lim.process(l, r);
+    const e = (x: Float32Array) => x.slice(FS / 2).reduce((s, v) => s + v * v, 0); return e(r) / e(l); };
+  expect(run(40)).toBeGreaterThan(0.8);   // 40 Hz, left only: now (nearly) mono
+  expect(run(2000)).toBeLessThan(1e-4);   // 2 kHz, left only: untouched
+});

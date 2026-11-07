@@ -233,7 +233,7 @@ test('RESET FX puts the echo, gate box and DYNAMIX back to their defaults', asyn
   await page.click('#fxreset');
   await expect(page.locator('#lstat')).toHaveText('FX RESET');
   const fx = await page.evaluate(() => JSON.parse(localStorage.getItem('md-web-v1')!).fx);
-  expect(fx).toEqual({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100], dyn: [0, 0, 0, 0, 0, 0, 0, 0] });
+  expect(fx).toEqual({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100], dyn: [0, 0, 76, 0, 0, 0, 0, 0] });
 });
 
 ftest('?factory=N resets to factory song N; SONG + PLAY plays it', async ({ page }) => {

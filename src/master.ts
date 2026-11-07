@@ -1,5 +1,5 @@
 // Master bus end stage and meter, shared by the live worklet (md-processor.ts) and EXP WAV (render.ts).
-// Limiter: makeup GAIN -> soft clip (CLIP, 0 = off) -> stereo-linked look-ahead brickwall at CEIL. The gain is the minimum of the
+// Limiter: MONO (side high-passed) -> makeup GAIN -> soft clip (CLIP, 0 = off) -> stereo-linked look-ahead brickwall at CEIL. The gain is the minimum of the
 // needed gains over the look-ahead window, released, then box-averaged over the same window, so it is down to a
 // peak's gain by the time that peak leaves the delay line: no overs, no attack click.
 // Meter: integrated / short-term max loudness (ITU-R BS.1770-4, gated), 4x true peak, and the level per band.
@@ -11,8 +11,9 @@ export class Limiter {
   private n: number; private dl: Float32Array; private dr: Float32Array;
   private qv: Float64Array; private qi: Float64Array; private qh = 0; private qt = 0; // monotonic deque (ring) for the window min
   private box: Float64Array; private sum: number; private g = 1; private kr: number; private i = 0;
-  private drive = 1; private knee = Infinity;
+  private drive = 1; private knee = Infinity; private side: Chain | null = null; private mlo: Chain | null = null; private mhi: Chain | null = null; private fs: number; private monoV = 0;
   constructor(fs: number) {
+    this.fs = fs;
     const n = this.n = Math.max(2, Math.round(LOOK * fs));
     this.lat = n - 1;
     this.dl = new Float32Array(n); this.dr = new Float32Array(n);
@@ -21,7 +22,16 @@ export class Limiter {
     this.kr = Math.exp(-1 / (REL * fs));
   }
   // clip 0-127: up to +6 dB of drive into a tanh knee that starts lower the more it is turned up; gain 0-127: 0 to +18 dB
-  set(clip: number, gain = 0) { const c = clip / 127; this.drive = (1 + c) * Math.pow(10, gain / 127 * 18 / 20); this.knee = clip > 0 ? CEIL * (1 - 0.5 * c) : Infinity; }
+  // mono 0-127: 0 = off, else a Linkwitz-Riley crossover at 30-300 Hz: the side keeps only its high half (LR4 HP), the
+  // mid goes through the crossover's all-pass (LR4 LP + HP), so above it the stereo image is untouched
+  set(clip: number, gain = 0, mono = 0) {
+    if (mono !== this.monoV) {
+      this.monoV = mono;
+      const f = 30 * Math.pow(10, mono / 127), q = Math.SQRT1_2, lr = (t: 'lp' | 'hp') => mono > 0 ? new Chain([rbj(t, this.fs, f, q), rbj(t, this.fs, f, q)]) : null;
+      this.side = lr('hp'); this.mlo = lr('lp'); this.mhi = lr('hp');
+    }
+    const c = clip / 127; this.drive = (1 + c) * Math.pow(10, gain / 127 * 18 / 20); this.knee = clip > 0 ? CEIL * (1 - 0.5 * c) : Infinity;
+  }
   private sat(x: number) {
     x *= this.drive;
     const a = Math.abs(x), k = this.knee;
@@ -30,7 +40,9 @@ export class Limiter {
   process(l: Float32Array, r: Float32Array, off = 0, len = l.length - off) {
     const n = this.n, m = n + 1;
     for (let j = off; j < off + len; j++) {
-      const xl = this.sat(l[j]), xr = this.sat(r[j]), pk = Math.max(Math.abs(xl), Math.abs(xr)), need = pk > CEIL ? CEIL / pk : 1, i = this.i;
+      let xa = l[j], xb = r[j];
+      if (this.side) { const m0 = (xa + xb) / 2, md = this.mlo!.tick(m0) + this.mhi!.tick(m0), sd = this.side.tick((xa - xb) / 2); xa = md + sd; xb = md - sd; }
+      const xl = this.sat(xa), xr = this.sat(xb), pk = Math.max(Math.abs(xl), Math.abs(xr)), need = pk > CEIL ? CEIL / pk : 1, i = this.i;
       while (this.qt !== this.qh && this.qv[(this.qt + m - 1) % m] >= need) this.qt = (this.qt + m - 1) % m;
       this.qv[this.qt] = need; this.qi[this.qt] = i; this.qt = (this.qt + 1) % m;
       while (this.qi[this.qh] <= i - n) this.qh = (this.qh + 1) % m;

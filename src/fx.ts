@@ -4,12 +4,13 @@
 export const ECHO_LABELS = ['TIME', 'FB', 'FILF', 'FILW', '', '', '', 'LEV'];
 export const GATE_LABELS = ['ATCK', 'HOLD', 'DEC', 'HP', 'LP', '', '', 'LEV'];
 // DYNAMIX: the master end stage (master.ts). CLIP = soft clip drive into the limiter, 0 = off;
-// GAIN = makeup gain into the clip / limiter, 0 to +18 dB (0 = unity)
-export const DYN_LABELS = ['CLIP', 'GAIN', '', '', '', '', '', ''];
+// GAIN = makeup gain into the clip / limiter, 0 to +18 dB (0 = unity); MONO = the side under 30-300 Hz cut (0 = off,
+// 76 = 120 Hz), so the low end is mono
+export const DYN_LABELS = ['CLIP', 'GAIN', 'MONO', '', '', '', '', ''];
 export interface Fx { echo: number[]; gate: number[]; dyn?: number[] } // dyn: missing in older saves and the factory songs
-export const defaultFx = (): Fx => ({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100], dyn: [0, 0, 0, 0, 0, 0, 0, 0] });
+export const defaultFx = (): Fx => ({ echo: [16, 60, 20, 90, 0, 0, 0, 100], gate: [0, 40, 20, 20, 100, 0, 0, 100], dyn: [0, 0, 76, 0, 0, 0, 0, 0] });
 export const dynOf = (fx: Fx) => (fx.dyn ??= defaultFx().dyn!);
-export const dynVals = (fx: Fx): [clip: number, gain: number] => [fx.dyn?.[0] ?? 0, fx.dyn?.[1] ?? 0];
+export const dynVals = (fx: Fx): [clip: number, gain: number, mono: number] => [fx.dyn?.[0] ?? 0, fx.dyn?.[1] ?? 0, fx.dyn?.[2] ?? 0];
 
 const ex = (v: number, lo: number, hi: number) => lo * Math.pow(hi / lo, v / 127);
 export const echoSteps = (time: number) => 1 + Math.floor(time / 8); // 1-16 sixteenths
