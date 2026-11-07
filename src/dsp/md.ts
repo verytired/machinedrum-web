@@ -9,6 +9,7 @@ export const AMD = 8, AMF = 9, EQF = 10, EQG = 11, FLTF = 12, FLTW = 13, FLTQ = 
 // DUCK (not on the MD; its LFOS slot, harmless in a .syx since LFOD is 0): how far a BD-track hit pushes this track down
 // (dry and sends, so its echo / gate box return doesn't fill the kick's space), sidechain style. The duck envelope is the engine's, fired by every track-1 trig.
 // ponytail: fixed release; make DUCK_DEC a knob if one curve doesn't suit every tempo
+const IDLE = 1024;
 export const DUCK = 21, DUCK_DEC = 1.0, DUCK_MAX = 0.9;
 export const NOUT = 6; // dry L/R, echo send L/R, gate box send L/R
 export const MAXS = 1 << 18; // ROM sample length cap per track (~5.5 s at 48 kHz)
@@ -69,6 +70,9 @@ export function blep(t: number, dt: number): number {
 
 class Voice {
   // tone
+  // idle: every envelope and the output under -100 dB for IDLE samples: tick() returns 0 until the next trig
+  // (oscillator phases stand still meanwhile). ponytail: the main cost of an export is voices ticking in silence
+  idle = true; q = 0;
   ph = 0; mph = 0; f0 = 100; pe = 0; pk = 0; pamt = 0; ie = 0; ik = 0; iamt = 0; ratio = 1;
   // slide (as on a 303 / the MD's slide trigs): the pitch glides from f0 to ft, the envelopes and FM keep going
   sl = false; ft = 100; gc: number; du = 0;
@@ -97,6 +101,7 @@ class Voice {
   }
 
   trig(m: number, p: ArrayLike<number>, slide = 0) {
+    this.idle = false; this.q = 0;
     this.sl = slide > 0 && this.toneE.h > 1e-4; // only a sounding note glides
     if (!this.sl) { this.pamt = 0; this.iamt = 0; }
     this.son = 0;
@@ -144,6 +149,7 @@ class Voice {
   }
 
   tick(nz: number): number {
+    if (this.idle) return 0;
     const fs = this.fs;
     this.f0 = this.ft + (this.f0 - this.ft) * this.gc;
     const f = this.f0 * (1 + this.pamt * this.pe); this.pe *= this.pk;
@@ -181,6 +187,9 @@ class Voice {
     this.sc += 1; if (this.sc >= this.sk) { this.sc = 0; this.sh = x; }
     x = this.sh;
     if (this.dg > 0) x = Math.tanh(x * (1 + this.dg)) / Math.tanh(1 + this.dg);
+    if (this.toneE.h < 1e-5 && this.noiseE.h < 1e-5 && this.metalE.h < 1e-5 && this.son == 0 && this.nb == 0 && Math.abs(x) < 1e-6) {
+      this.q += 1; if (this.q > IDLE) this.idle = true;
+    } else this.q = 0;
     return x;
   }
 }

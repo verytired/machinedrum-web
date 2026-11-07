@@ -2,6 +2,7 @@
 // same hits and checks they match. --runtime stub: everything is allocated in init(), never after.
 
 const AMD = 8, AMF = 9, EQF = 10, EQG = 11, FLTF = 12, FLTW = 13, FLTQ = 14, SRR = 15, DIST = 16, VOL = 17, PAN = 18, DEL = 19, REV = 20, DUCK = 21;
+const IDLE: i32 = 1024;
 const DUCK_DEC: f64 = 1.0, DUCK_MAX: f64 = 0.9;
 const TAU: f64 = 2 * Math.PI;
 const LN1000: f64 = 6.907755278982137;
@@ -58,6 +59,7 @@ function blep(t: f64, dt: f64): f64 {
 }
 
 class Voice {
+  idle: bool = true; q: i32 = 0;
   ph: f64 = 0; mph: f64 = 0; f0: f64 = 100; pe: f64 = 0; pk: f64 = 0; pamt: f64 = 0; ie: f64 = 0; ik: f64 = 0; iamt: f64 = 0; ratio: f64 = 1;
   sl: bool = false; ft: f64 = 100; gc: f64 = 0; // slide: see src/dsp/md.ts
   toneE: Env; noiseE: Env; metalE: Env;
@@ -85,6 +87,7 @@ class Voice {
   }
 
   trig(m: i32, p: StaticArray<f64>, slide: i32): void {
+    this.idle = false; this.q = 0;
     this.sl = slide > 0 && this.toneE.h > 1e-4;
     if (!this.sl) { this.pamt = 0; this.iamt = 0; }
     this.son = 0;
@@ -132,6 +135,7 @@ class Voice {
   }
 
   tick(nz: f64): f64 {
+    if (this.idle) return 0;
     const fs = this.fs;
     this.f0 = this.ft + (this.f0 - this.ft) * this.gc;
     const f = this.f0 * (1 + this.pamt * this.pe); this.pe *= this.pk;
@@ -169,6 +173,9 @@ class Voice {
     this.sc += 1; if (this.sc >= this.sk) { this.sc = 0; this.sh = x; }
     x = this.sh;
     if (this.dg > 0) x = Math.tanh(x * (1 + this.dg)) / Math.tanh(1 + this.dg);
+    if (this.toneE.h < 1e-5 && this.noiseE.h < 1e-5 && this.metalE.h < 1e-5 && this.son == 0 && this.nb == 0 && Math.abs(x) < 1e-6) {
+      this.q += 1; if (this.q > IDLE) this.idle = true;
+    } else this.q = 0;
     return x;
   }
 }
