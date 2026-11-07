@@ -290,3 +290,27 @@ test('MnM plays on the MD clock: MD PLAY runs its steps and it is heard with the
   await page.reload();
   await expect(page.locator('#mlnote')).toHaveText('G2');
 });
+
+test('automation lanes: + LANE adds a flat FLTW lane over the song, click adds a point, drag moves it, double-click deletes it, saved', async ({ page }) => {
+  const auto = () => page.evaluate(() => JSON.parse(localStorage.getItem('md-web-v1')!).auto);
+  await page.click('#songkey');
+  await page.click('#addrow');
+  await page.locator('#song tr').nth(0).locator('[data-f=rep]').fill('8');
+  await page.locator('#song tr').nth(0).locator('[data-f=rep]').dispatchEvent('change');
+  await page.click('#addlane');
+  const c = page.locator('.lane canvas');
+  const box = (await c.boundingBox())!;
+  expect((await auto())[0]).toMatchObject({ tr: 0, par: 13 });
+  expect((await auto())[0].pts.map((p: number[]) => p[0])).toEqual([0, 8]);
+  await page.mouse.click(box.x + box.width / 2, box.y + 5);                  // bar 4, top: 127
+  expect((await auto())[0].pts).toContainEqual([4, 127]);
+  await page.mouse.move(box.x + box.width / 2, box.y + 5); await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height - 5); await page.mouse.up();   // to bar 6, bottom: 0
+  expect((await auto())[0].pts).toEqual([[0, (await auto())[0].pts[0][1]], [6, 0], [8, (await auto())[0].pts[2][1]]]);
+  await page.mouse.dblclick(box.x + box.width * 0.75, box.y + box.height - 5);
+  expect((await auto())[0].pts.length).toBe(2);
+  await page.locator('.lane [data-f=tr]').selectOption('16');                 // an MNM track: its params
+  await expect(page.locator('.lane [data-f=par] option').first()).toHaveText('WAV');
+  await page.click('.dlane');
+  expect(await auto()).toEqual([]);
+});

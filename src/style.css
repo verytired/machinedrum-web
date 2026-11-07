@@ -150,3 +150,7 @@ label{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:10
 .md:not(.mnm) .song tr.cur{background:#f5774f}
 .md:not(.mnm) .song button,.md:not(.mnm) .song select,.md:not(.mnm) .song input{background:#f06a42;color:var(--lcd-fg);border-color:var(--lcd-dim)}
 .md:not(.mnm) .song .mut button.on{background:var(--lcd-fg);color:var(--lcd-bg)}
+.song .auto{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+.song .lane{display:grid;grid-template-columns:auto auto auto 1fr;gap:4px;align-items:center}
+.song .lane canvas{width:100%;min-width:240px;height:64px;background:rgba(255,255,255,.12);border:1px solid var(--lcd-dim);touch-action:none;cursor:crosshair}
+.song .auto>.key{align-self:flex-start}

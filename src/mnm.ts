@@ -41,6 +41,7 @@ const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catc
 
 // ---- what main.ts wires up ----
 export const mnm = {
+  labels: (tr: number) => MACHINES[st.kit[tr].m].labels.concat(...PAGE_LABELS.slice(1)),   // params 0-31 (for automation)
   ctx: undefined as AudioContext | undefined,
   node: undefined as AudioWorkletNode | undefined,
   ensure: async () => {},

@@ -1,6 +1,6 @@
 import { $, numbox, encoder, drawEnc } from './dom';
 import { masterFx, defaultFx, dynOf, dynVals, seeded, ECHO_LABELS, GATE_LABELS, DYN_LABELS } from './fx';
-import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, micro, defaultState, stepParams, applyAuto, type State, type Pat } from './machines';
+import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, micro, defaultState, stepParams, applyAuto, laneAt, type Lane, type State, type Pat } from './machines';
 import { enter, next, barAt, isPat, slotName, type Pos, type PatRow, type Row } from './song';
 import { songState } from './bars';
 import { FACTORY } from './presets';
@@ -392,14 +392,60 @@ function rowHtml(r: Row, i: number) {
     + `<td><button class="ins" title="duplicate this row below">+</button><button class="del" title="delete this row">−</button></td></tr>`;
 }
 function renderSong() {
-  songEl.innerHTML = `<table>${st.song.map(rowHtml).join('')}</table><button class="key" id="addrow">+ ROW</button><button class="key" id="clrsong">CLEAR SONG</button>`;
-  songEl.querySelectorAll<HTMLSelectElement>('select').forEach((el, i) => { const r = st.song[i]; el.value = isPat(r) ? String(r.pat) : 'loop' in r ? 'loop' : 'end'; });
+  songEl.innerHTML = `<table>${st.song.map(rowHtml).join('')}</table><button class="key" id="addrow">+ ROW</button><button class="key" id="clrsong">CLEAR SONG</button>`
+    + `<div class="auto">AUTOMATION (song mode, EXP WAV): click = add a point, drag = move, double-click = delete${(st.auto ?? []).map(laneHtml).join('')}`
+    + `<button class="key" id="addlane">+ LANE</button></div>`;
+  songEl.querySelectorAll<HTMLSelectElement>('tr select').forEach((el, i) => { const r = st.song[i]; el.value = isPat(r) ? String(r.pat) : 'loop' in r ? 'loop' : 'end'; });
+  songEl.querySelectorAll<HTMLCanvasElement>('.lane canvas').forEach((c, i) => { c.width = c.clientWidth; drawLane(c, st.auto![i]); laneDrag(c, st.auto![i]); });
   draw();
+}
+
+// ---- automation lanes: [bar, value] points over the song's bars (the pattern rows' repeats, loops not unrolled)
+const songLen = () => Math.max(1, st.song.reduce((n, r) => n + (isPat(r) ? Math.max(1, r.rep) : 0), 0));
+const parLabels = (tr: number) => tr < 16 ? MACHINES[st.kit[tr].m].labels.concat(FX_LABELS, ROUTE_LABELS) : mnm.labels(tr - 16);
+const opts = (names: string[], v: number) => names.map((n, k) => n ? `<option value="${k}"${k === v ? ' selected' : ''}>${n}</option>` : '').join('');
+const laneHtml = (a: Lane, i: number) => `<div class="lane" data-a="${i}"><select data-f="tr">${opts([...TRACKS, ...[1, 2, 3, 4, 5, 6].map(k => `MN${k}`)], a.tr)}</select>`
+  + `<select data-f="par">${opts(parLabels(a.tr), a.par)}</select><button class="dlane" title="delete this lane">−</button><canvas height="64"></canvas></div>`;
+const LH = 64, PR = 5;
+const lx = (c: HTMLCanvasElement, bar: number) => PR + bar / songLen() * (c.width - 2 * PR), ly = (v: number) => PR + (127 - v) / 127 * (LH - 2 * PR);
+function drawLane(c: HTMLCanvasElement, a: Lane) {
+  const g = c.getContext('2d')!, fg = getComputedStyle(songEl).color, n = songLen();
+  g.clearRect(0, 0, c.width, LH); g.strokeStyle = g.fillStyle = fg;
+  g.globalAlpha = 0.25; for (let b = 0; b <= n; b += 16) g.fillRect(Math.round(lx(c, b)), 0, 1, LH);   // every 16 bars
+  g.globalAlpha = 1; g.beginPath();
+  const pts: [number, number][] = a.pts.length ? a.pts : [[0, 64]];
+  g.moveTo(lx(c, 0), ly(laneAt(pts, 0)));
+  for (const [b, v] of pts) g.lineTo(lx(c, b), ly(v));
+  g.lineTo(lx(c, n), ly(laneAt(pts, n))); g.stroke();
+  for (const [b, v] of a.pts) g.fillRect(lx(c, b) - 3, ly(v) - 3, 6, 6);
+}
+function laneDrag(c: HTMLCanvasElement, a: Lane) {
+  const at = (e: MouseEvent): [number, number] => {
+    const r = c.getBoundingClientRect(), x = (e.clientX - r.left) * c.width / r.width, y = e.clientY - r.top;
+    return [Math.max(0, Math.min(songLen(), Math.round((x - PR) / (c.width - 2 * PR) * songLen()))), Math.max(0, Math.min(127, Math.round(127 - (y - PR) / (LH - 2 * PR) * 127)))];
+  };
+  const near = (e: MouseEvent) => { const r = c.getBoundingClientRect(); return a.pts.find(([b, v]) => Math.hypot(lx(c, b) - (e.clientX - r.left) * c.width / r.width, ly(v) - (e.clientY - r.top)) < 7); };
+  c.onpointerdown = e => {
+    let q = near(e);
+    if (!q) { q = at(e); a.pts.push(q); }
+    c.setPointerCapture(e.pointerId);
+    const move = (m: MouseEvent) => { [q![0], q![1]] = at(m); a.pts.sort((x, y) => x[0] - y[0]); drawLane(c, a); };
+    move(e);
+    c.onpointermove = move;
+    c.onpointerup = () => { c.onpointermove = c.onpointerup = null; save(); };
+  };
+  c.ondblclick = e => { const q = near(e); if (q) { a.pts.splice(a.pts.indexOf(q), 1); drawLane(c, a); save(); } };
 }
 // rows moved by an insert / delete at i: LOOP / JUMP targets below it follow them
 const shift = (i: number, d: number) => st.song.forEach(r => { if ('loop' in r && r.loop > i) r.loop += d; });
 songEl.onchange = e => {
-  const el = e.target as HTMLInputElement, i = +el.closest('tr')!.dataset.r!, f = el.dataset.f!, r = st.song[i];
+  const el = e.target as HTMLInputElement, lane = el.closest<HTMLElement>('.lane');
+  if (lane) {
+    const a = st.auto![+lane.dataset.a!];
+    if (el.dataset.f === 'tr') { a.tr = +el.value; if (!parLabels(a.tr)[a.par]) a.par = parLabels(a.tr).findIndex(Boolean); } else a.par = +el.value;
+    save(); renderSong(); return;
+  }
+  const i = +el.closest('tr')!.dataset.r!, f = el.dataset.f!, r = st.song[i];
   if (f === 'kind') st.song[i] = el.value === 'end' ? { end: true } : el.value === 'loop' ? { loop: Math.max(0, i - 1), times: 2 } : isPat(r) ? { ...r, pat: +el.value } : { ...newRow(), pat: +el.value };
   else {
     const [lo, hi] = LIM[f], v = el.value === '' ? null : Math.max(lo, Math.min(hi, Math.round(+el.value) || lo));
@@ -413,6 +459,8 @@ songEl.onclick = e => {
   const b = (e.target as HTMLElement).closest('button');
   if (!b) return;
   if (b.id === 'addrow') { if (st.song.length < 256) st.song.push(newRow()); }
+  else if (b.id === 'addlane') { const v = st.kit[cur].p[13]; (st.auto ??= []).push({ tr: cur, par: 13, pts: [[0, v], [songLen(), v]] }); }   // FLTW of the track in hand
+  else if (b.classList.contains('dlane')) st.auto!.splice(+b.closest<HTMLElement>('.lane')!.dataset.a!, 1);
   else if (b.id === 'clrsong') { if (!st.song.length || !confirm('Delete all song rows?')) return; $('stop').click(); st.song = []; songRow = 0; }
   else {
     const i = +b.closest('tr')!.dataset.r!, r = st.song[i];
