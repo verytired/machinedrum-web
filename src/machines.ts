@@ -48,8 +48,12 @@ export function laneAt(pts: [number, number][], pos: number): number {
   for (let k = 1; k < pts.length; k++) if (pos < pts[k][0]) { const [a, va] = pts[k - 1], [b, vb] = pts[k]; return va + (vb - va) * (pos - a) / (b - a); }
   return pts[pts.length - 1][1];
 }
-export function applyAuto(auto: Lane[] | undefined, tr: number, pos: number, p: number[], lock?: Record<number, number> | null) {
-  if (auto) for (const a of auto) if (a.tr === tr && a.pts.length && lock?.[a.par] === undefined) p[a.par] = Math.max(0, Math.min(127, Math.round(laneAt(a.pts, pos))));
+// a lane sets the param; a step that locks it keeps its ratio to the track's own value (base): lock * lane / base
+export function applyAuto(auto: Lane[] | undefined, tr: number, pos: number, p: number[], lock: Record<number, number> | null | undefined, base: number[]) {
+  if (auto) for (const a of auto) if (a.tr === tr && a.pts.length) {
+    const v = laneAt(a.pts, pos), l = lock?.[a.par];
+    p[a.par] = Math.max(0, Math.min(127, Math.round(l === undefined ? v : base[a.par] > 0 ? l * v / base[a.par] : l)));
+  }
 }
 
 export const trackFor = (m: number): Track => ({ m, p: MACHINES[m].defs.concat(TRACK_DEFS) });

@@ -129,10 +129,10 @@ function tick() {
     const at16 = songBar + i / 16, auto = songMode ? st.auto : undefined;
     for (let tr = 0; tr < 16; tr++) if (st.trig[tr][i] && !(mute >> tr & 1)) {
       const p = stepParams(st, tr, i);
-      applyAuto(auto, tr, at16, p, st.lock[tr][i]);
+      applyAuto(auto, tr, at16, p, st.lock[tr][i], st.kit[tr].p);
       hit(tr, ts + micro(st.lock[tr][i]) * 60 / tempo.value / 4, p, st.lock[tr][i]?.[SLIDE] ? 1 : 0);
     }
-    const mi = n16 % 16; mnm.step(n16++, ts, 60 / tempo.value / 4, auto && ((tr, p, l) => applyAuto(auto, 16 + tr, at16, p, l))); // the MnM on the MD's clock
+    const mi = n16 % 16; mnm.step(n16++, ts, 60 / tempo.value / 4, auto && ((tr, p, l, base) => applyAuto(auto, 16 + tr, at16, p, l, base))); // the MnM on the MD's clock
     at(t, () => { pos = i; drawSteps(); mnm.show(mi); });
     nextT += 60 / tempo.value / 4;
     if (++step >= last) newBar = true;

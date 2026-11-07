@@ -46,9 +46,9 @@ export const mnm = {
   ensure: async () => {},
   // the n-th 16th since PLAY at time t (dur = one 16th): the MnM loops its own 16 steps, like a unit on MIDI clock
   // auto: song automation for this step (main.ts, in song mode), given the track, its params and the step's lock
-  step(n: number, t: number, dur: number, auto?: (tr: number, p: number[], l: Lock) => void) {
+  step(n: number, t: number, dur: number, auto?: (tr: number, p: number[], l: Lock, base: number[]) => void) {
     const i = n % 16;
-    for (let tr = 0; tr < 6; tr++) if (st.trig[tr][i]) { const p = params(tr, i); auto?.(tr, p, st.lock[tr][i]); hit(tr, t, p, dur); }
+    for (let tr = 0; tr < 6; tr++) if (st.trig[tr][i]) { const p = params(tr, i); auto?.(tr, p, st.lock[tr][i], st.kit[tr].p); hit(tr, t, p, dur); }
   },
   show(i: number) { pos = i; drawSteps(); },
   flush() { this.node?.port.postMessage({ k: 'flush' }); this.show(-1); },

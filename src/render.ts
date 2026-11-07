@@ -29,13 +29,13 @@ export function songHits(st: State, mnm?: MState): { hits: Hit[]; mhits: Hit[]; 
     for (let i = r.of; i < r.len; i++, t += step) {
       const f = Math.round((t + (i % 2 ? st.swing * step : 0)) * SR);
       if (mnm && mp) for (let tr = 0; tr < 6; tr++) if (mp.trig[tr][i]) {
-        const p = mparams(mnm, mp, tr, i); applyAuto(st.auto, 16 + tr, b0 + i / 16, p, mp.lock[tr][i]); p[GATE] = (p[LEN] + 1) / 8 * step; mhits.push({ f, tr, m: mnm.kit[tr].m, p, s: 0 });
+        const p = mparams(mnm, mp, tr, i); applyAuto(st.auto, 16 + tr, b0 + i / 16, p, mp.lock[tr][i], mnm.kit[tr].p); p[GATE] = (p[LEN] + 1) / 8 * step; mhits.push({ f, tr, m: mnm.kit[tr].m, p, s: 0 });
       }
       if (!pat) continue;
       for (let tr = 0; tr < 16; tr++) if (pat.trig[tr][i] && !(r.mute >> tr & 1))
         {
           const q = stepParams({ ...st, ...pat }, tr, i);
-          applyAuto(st.auto, tr, b0 + i / 16, q, pat.lock[tr][i]);
+          applyAuto(st.auto, tr, b0 + i / 16, q, pat.lock[tr][i], st.kit[tr].p);
           hits.push({ f: f + Math.round(micro(pat.lock[tr][i]) * step * SR), tr, m: st.kit[tr].m, p: q, s: pat.lock[tr][i]?.[SLIDE] ? 1 : 0 });
         }
     }
