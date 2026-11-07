@@ -1,5 +1,5 @@
 import { $, numbox, encoder, drawEnc } from './dom';
-import { masterFx, defaultFx, dynOf, dynVals, ECHO_LABELS, GATE_LABELS, DYN_LABELS } from './fx';
+import { masterFx, defaultFx, dynOf, dynVals, seeded, ECHO_LABELS, GATE_LABELS, DYN_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, micro, defaultState, stepParams, type State, type Pat } from './machines';
 import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
 import { songState } from './bars';
@@ -215,7 +215,7 @@ async function setSample(tr: number, s: Saved, persist = true) {
   smpName[tr] = s.name; saved[tr] = s;
   if (persist) idb('readwrite', st => st.put(s, tr)).catch(() => { /* private mode: this session only */ });
   let d: Float32Array;
-  if (s.voice) d = voice(s.voice, ctx!.sampleRate);
+  if (s.voice) d = voice(s.voice, ctx!.sampleRate, seeded(s.voice));
   else {
     const ab = await ctx!.decodeAudioData(s.file!.slice(0)); // resampled to the context rate; slice: decoding detaches its input
     d = new Float32Array(ab.length);
@@ -254,7 +254,7 @@ $('export').onclick = async () => {
 // .syx for a real Machinedrum (send it with C6 / mddt): kit, used patterns, song, ROM samples; see src/syx.ts for what carries over
 const SR = 44100;
 async function pcm(x: Saved): Promise<Sample> {
-  if (x.voice) return { slot: 0, rate: SR, d: voice(x.voice, SR) };
+  if (x.voice) return { slot: 0, rate: SR, d: voice(x.voice, SR, seeded(x.voice)) };
   const ab = await new OfflineAudioContext(1, 1, SR).decodeAudioData(x.file!.slice(0)), d = new Float32Array(ab.length);
   for (let c = 0; c < ab.numberOfChannels; c++) ab.getChannelData(c).forEach((v, i) => d[i] += v / ab.numberOfChannels);
   return { slot: 0, rate: SR, d };

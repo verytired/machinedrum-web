@@ -14,6 +14,13 @@ export const dynVals = (fx: Fx): [clip: number, gain: number] => [fx.dyn?.[0] ??
 const ex = (v: number, lo: number, hi: number) => lo * Math.pow(hi / lo, v / 127);
 export const echoSteps = (time: number) => 1 + Math.floor(time / 8); // 1-16 sixteenths
 
+// A fixed random sequence per seed (mulberry32), so the gate box IR and the voice samples are the same on every
+// render and the meter compares like with like
+export function seeded(seed: string | number): () => number {
+  let a = typeof seed === 'number' ? seed >>> 0 : [...seed].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0, 2166136261);
+  return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
 // Gate box impulse response: attack ramp, flat hold, short release, then silence
 export function gateIR(fs: number, atck: number, hold: number, dec: number, rnd = Math.random): Float32Array<ArrayBuffer>[] {
   const a = Math.round(atck / 127 * 0.1 * fs), h = Math.round(hold / 127 * 0.5 * fs), d = Math.round(ex(dec, 0.005, 0.3) * fs);
@@ -51,7 +58,7 @@ export function masterFx(ctx: BaseAudioContext, dest: AudioNode) {
       const key = `${at},${hold},${dec}`;
       if (key !== irKey) {
         irKey = key;
-        const ir = gateIR(ctx.sampleRate, at, hold, dec), buf = ctx.createBuffer(2, ir[0].length, ctx.sampleRate);
+        const ir = gateIR(ctx.sampleRate, at, hold, dec, seeded(key)), buf = ctx.createBuffer(2, ir[0].length, ctx.sampleRate);
         ir.forEach((c, i) => buf.copyToChannel(c, i));
         conv.buffer = buf;
       }

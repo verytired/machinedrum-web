@@ -40,3 +40,12 @@ test('meter: BS.1770 level of a 1 kHz sine, 4x true peak, bands', () => {
   expect(b.sub).toBeGreaterThan(-3);                         // 40 Hz sits between the 20 and 60 Hz edges: -2.1 dB in theory
   expect(b.mid).toBeLessThan(-30);
 });
+
+test('seeded: the same sequence for the same seed, a different one for another', async () => {
+  const { seeded, gateIR } = await import('./fx');
+  const a = seeded('HEY'), b = seeded('HEY'), c = seeded('HO'), xs = Array.from({ length: 1000 }, a);
+  expect(xs).toEqual(Array.from({ length: 1000 }, b));
+  expect(xs).not.toEqual(Array.from({ length: 1000 }, c));
+  expect(Math.min(...xs)).toBeGreaterThanOrEqual(0); expect(Math.max(...xs)).toBeLessThan(1);
+  expect(gateIR(44100, 0, 40, 20, seeded('0,40,20'))[0]).toEqual(gateIR(44100, 0, 40, 20, seeded('0,40,20'))[0]);
+});
