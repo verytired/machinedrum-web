@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { MdEngine, NPAR, NOUT, VOL, FLTW, FLTQ, DIST, SRR, AMD, DEL, REV, DUCK } from './md';
+import { MdEngine, NPAR, NOUT, VOL, FLTW, FLTQ, DIST, SRR, AMD, DEL, REV, DUCK, FLTF } from './md';
 import { MACHINES, SLIDE, trackFor, defaultState, stepParams } from '../machines';
 import { applyBar, songState } from '../bars';
 import { FACTORY } from '../presets';
@@ -60,6 +60,7 @@ describe('MD engine', () => {
     hits.push([12 * s + 900, 0, 3, trackFor(3).p]); // BD track again: the duck key
     hits.push([13 * s, 7, 7, trackFor(7).p]); // retrigger mid-tail
     const rev = trackFor(12).p; rev[0] = 71; rev[2] = 100; rev[3] = 10; hits.push([14 * s + 3, 13, 12, rev]); // ROM reversed, pitched up
+    const sl = trackFor(12).p; sl[1] = 30; sl[2] = 70; sl[4] = 40; sl[5] = 1; sl[6] = 60; hits.push([16 * s + 7, 11, 12, sl]); // ROM: a slice, looped, the pitch envelope
     // a 303-style slide on EFM-BD: three notes, the 2nd and 3rd glide in without a retrigger
     const acid = trackFor(8).p; acid[1] = 90; acid[FLTQ] = 100;
     [[60, 0], [80, 1], [40, 1]].forEach(([pt, sl], k) => hits.push([15 * s + k * s / 4, 14, 8, [pt, ...acid.slice(1)], sl]));
@@ -179,5 +180,22 @@ describe('voice samples', () => {
       expect(peak(v)).toBeCloseTo(0.8, 5);
       expect(v.length).toBeGreaterThan(SR * 0.15);
     }
+  });
+  it('ROM SLIC picks an equal slice (END = how much of it), LOOP repeats it while DEC lasts, PENV starts it fast', () => {
+    const ramp = Float32Array.from({ length: SR }, (_, i) => i / SR * Math.sin(2 * Math.PI * 1000 * i / SR));   // the level says where in the sample we are
+    const run = (over: Record<number, number>, ms = 400) => {
+      const e = new MdEngine(SR); e.sample(0, ramp);
+      const p = trackFor(12).p; p[FLTF] = 0; Object.assign(p, over);
+      return drive(e, [[0, 0, 12, p]], Math.round(SR * ms / 1000))[0];
+    };
+    const at = (x: Float32Array, ms: number) => peak(x, Math.round(SR * ms / 1000), Math.round(SR * (ms + 2) / 1000));
+    const s0 = run({ 4: 16, 2: 0 }), s2 = run({ 4: 16, 2: 70 });           // 4 slices: the 1st, the 3rd
+    expect(at(s2, 1) / at(s0, 100)).toBeGreaterThan(1.5);                    // the 3rd starts at half way (0.5) and the 1st is only at 0.1 by 100 ms
+    expect(peak(s2, Math.round(SR * 0.27))).toBeLessThan(0.01);                        // a slice is 0.25 s: silent after it
+    expect(peak(run({ 4: 16, 2: 70, 3: 64 }), Math.round(SR * 0.15))).toBeLessThan(0.01); // END 64: half the slice
+    const lp = run({ 4: 16, 2: 70, 5: 1 });
+    expect(peak(lp, Math.round(SR * 0.26), Math.round(SR * 0.4))).toBeGreaterThan(0.1);   // looped: still playing
+    expect(at(lp, 300) / at(lp, 240)).toBeLessThan(0.95);                     // back near the slice's start
+    expect(at(run({ 6: 127 }), 20) / at(run({}), 20)).toBeGreaterThan(1.5);  // PENV: 24 semitones up at first, so further along
   });
 });

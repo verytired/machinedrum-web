@@ -82,6 +82,7 @@ class Voice {
   imp = 0; nb = 0; bc = 0; cdec = 0.1;
   // ROM: the track's sample, played from sp toward se at sd samples per tick (negative = reverse)
   smp = new Float32Array(1); slen = 0; sp = 0; sd = 0; se = 0; son = 0; smpE: Env;
+  sa = 0; slp = 0; sps = 0; spk = 1; // ROM: loop start, LOOP on, the pitch envelope (semitones, decaying by spk)
   // track chain
   amd = 0; amf = 1; amph = 0; eq: Peq; hp: Svf; lp: Svf; sk = 1; sc = 0; sh = 0; dg = 0; gl = 0; gr = 0; dl = 0; dr = 0; rl = 0; rr = 0; // dl..rr: post-fader sends to echo / gate box
 
@@ -132,8 +133,13 @@ class Voice {
       this.tone(ex(p[0], 200, 2000), 0.4, ex(p[1], 0.01, 1)); this.fm(p[2] / 127 * 20, ex(p[3], 0.5, 8), ex(p[4], 0.005, 1));
       this.noise(0.3, ex(p[1], 0.01, 1), ex(p[5], 2000, 12000), 0.7, HP);
     } else if (m == 12 && this.slen > 1) { // ROM: PTCH 2 steps per semitone around 64, END < STRT plays reverse
-      const n = this.slen - 1, a = p[2] / 127 * n, b = p[3] / 127 * n, r = Math.pow(2, (p[0] - 64) / 24);
-      this.sp = a; this.se = b; this.sd = b >= a ? r : -r; this.son = 1; this.smpE.trig(1, ex(p[1], 0.02, 10));
+      // SLIC (0 = off): 2, 4 ... 256 equal slices, STRT picks one and END how much of it plays (127 = all, forward);
+      // LOOP (0 = off): from the end back to the start while DEC lasts; PENV: starts up to 24 semitones high, falls in ~80 ms
+      const n = this.slen - 1, r = Math.pow(2, (p[0] - 64) / 24), sc = p[4] > 0 ? 1 << (1 + (p[4] >> 4)) : 0;
+      let a = p[2] / 127 * n, b = p[3] / 127 * n;
+      if (sc > 0) { const k = Math.min(sc - 1, Math.floor(p[2] / 128 * sc)); a = k * n / sc; b = a + n / sc * Math.max(1, p[3]) / 127; }
+      this.sp = a; this.sa = a; this.se = b; this.sd = b >= a ? r : -r; this.son = 1; this.smpE.trig(1, ex(p[1], 0.02, 10));
+      this.slp = p[5] > 0 && Math.abs(b - a) >= 1 ? 1 : 0; this.sps = p[6] / 127 * 24; this.spk = coef(this.fs, 0.08);
     }
     this.amd = p[AMD] / 127; this.amf = ex(p[AMF], 0.5, 2000);
     this.eq.set(ex(p[EQF], 50, 15000), (p[EQG] - 64) / 64 * 18);
@@ -175,8 +181,10 @@ class Voice {
     if (this.son > 0) {
       const i = Math.floor(this.sp), fr = this.sp - i, a = this.smp[i], b = this.smp[Math.min(i + 1, this.slen - 1)];
       x += (a + (b - a) * fr) * this.smpE.tick();
-      this.sp += this.sd;
-      if (this.sd > 0 ? this.sp > this.se : this.sp < this.se) this.son = 0;
+      this.sp += this.sps > 1e-3 ? this.sd * Math.pow(2, this.sps / 12) : this.sd; this.sps *= this.spk;
+      if (this.sd > 0 ? this.sp > this.se : this.sp < this.se) {
+        if (this.slp > 0 && this.smpE.h > 1e-5) this.sp -= this.se - this.sa; else this.son = 0;
+      }
     }
     // track chain
     if (this.amd > 0) {

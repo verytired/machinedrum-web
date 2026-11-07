@@ -67,6 +67,7 @@ class Voice {
   mph6: StaticArray<f64> = new StaticArray<f64>(6); mdt: StaticArray<f64> = new StaticArray<f64>(6);
   imp: f64 = 0; nb: f64 = 0; bc: f64 = 0; cdec: f64 = 0.1;
   smp: StaticArray<f32> = new StaticArray<f32>(MAXS); slen: i32 = 0; sp: f64 = 0; sd: f64 = 0; se: f64 = 0; son: i32 = 0; smpE: Env;
+  sa: f64 = 0; slp: i32 = 0; sps: f64 = 0; spk: f64 = 1;
   amd: f64 = 0; amf: f64 = 1; amph: f64 = 0; eq: Peq; hp: Svf; lp: Svf; sk: f64 = 1; sc: f64 = 0; sh: f64 = 0; dg: f64 = 0; gl: f64 = 0; gr: f64 = 0; dl: f64 = 0; dr: f64 = 0; rl: f64 = 0; rr: f64 = 0; du: f64 = 0;
   fs: f64;
 
@@ -118,8 +119,11 @@ class Voice {
       this.tone(ex(p[0], 200, 2000), 0.4, ex(p[1], 0.01, 1)); this.fm(p[2] / 127 * 20, ex(p[3], 0.5, 8), ex(p[4], 0.005, 1));
       this.noise(0.3, ex(p[1], 0.01, 1), ex(p[5], 2000, 12000), 0.7, HP);
     } else if (m == 12 && this.slen > 1) {
-      const n = <f64>(this.slen - 1), a = p[2] / 127 * n, b = p[3] / 127 * n, r = Math.pow(2, (p[0] - 64) / 24);
-      this.sp = a; this.se = b; this.sd = b >= a ? r : -r; this.son = 1; this.smpE.trig(1, ex(p[1], 0.02, 10));
+      const n = <f64>(this.slen - 1), r = Math.pow(2, (p[0] - 64) / 24), sc: i32 = p[4] > 0 ? 1 << (1 + (<i32>p[4] >> 4)) : 0;
+      let a = p[2] / 127 * n, b = p[3] / 127 * n;
+      if (sc > 0) { const k = Math.min(<f64>(sc - 1), Math.floor(p[2] / 128 * <f64>sc)); a = k * n / <f64>sc; b = a + n / <f64>sc * Math.max(1, p[3]) / 127; }
+      this.sp = a; this.sa = a; this.se = b; this.sd = b >= a ? r : -r; this.son = 1; this.smpE.trig(1, ex(p[1], 0.02, 10));
+      this.slp = p[5] > 0 && Math.abs(b - a) >= 1 ? 1 : 0; this.sps = p[6] / 127 * 24; this.spk = coef(this.fs, 0.08);
     }
     this.amd = p[AMD] / 127; this.amf = ex(p[AMF], 0.5, 2000);
     this.eq.set(ex(p[EQF], 50, 15000), (p[EQG] - 64) / 64 * 18);
@@ -162,8 +166,10 @@ class Voice {
       const i = <i32>Math.floor(this.sp), fr = this.sp - <f64>i;
       const a = <f64>unchecked(this.smp[i]), b = <f64>unchecked(this.smp[min(i + 1, this.slen - 1)]);
       x += (a + (b - a) * fr) * this.smpE.tick();
-      this.sp += this.sd;
-      if (this.sd > 0 ? this.sp > this.se : this.sp < this.se) this.son = 0;
+      this.sp += this.sps > 1e-3 ? this.sd * Math.pow(2, this.sps / 12) : this.sd; this.sps *= this.spk;
+      if (this.sd > 0 ? this.sp > this.se : this.sp < this.se) {
+        if (this.slp > 0 && this.smpE.h > 1e-5) this.sp -= this.se - this.sa; else this.son = 0;
+      }
     }
     if (this.amd > 0) {
       x *= 1 - this.amd * (0.5 + 0.5 * Math.sin(TAU * this.amph));
