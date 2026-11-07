@@ -1,5 +1,5 @@
 import { $, numbox, encoder, drawEnc } from './dom';
-import { masterFx, defaultFx, dynOf, clipOf, ECHO_LABELS, GATE_LABELS, DYN_LABELS } from './fx';
+import { masterFx, defaultFx, dynOf, dynVals, ECHO_LABELS, GATE_LABELS, DYN_LABELS } from './fx';
 import { MACHINES, FX_LABELS, ROUTE_LABELS, TRACKS, SLIDE, micro, defaultState, stepParams, type State, type Pat } from './machines';
 import { enter, next, isPat, slotName, type Pos, type PatRow, type Row } from './song';
 import { songState } from './bars';
@@ -55,7 +55,7 @@ let msg = '', cur = 0, page = 0, held = -1, heldEdited = false, latched = false,
 // ---- audio ----
 let fx: ReturnType<typeof masterFx> | undefined;
 let limNode: AudioWorkletNode | undefined;
-const applyFx = () => { fx?.set(st.fx, 60 / tempo.value / 4); limNode?.port.postMessage(clipOf(st.fx)); };
+const applyFx = () => { fx?.set(st.fx, 60 / tempo.value / 4); limNode?.port.postMessage(dynVals(st.fx)); };
 let ctx: AudioContext | undefined, node: AudioWorkletNode | undefined, out: GainNode | undefined, engine = '';
 let ready: Promise<void> | undefined;
 async function ensureAudio() {

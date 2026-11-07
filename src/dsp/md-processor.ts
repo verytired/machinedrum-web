@@ -72,10 +72,10 @@ class MdProcessor extends AudioWorkletProcessor {
 
 registerProcessor('md', MdProcessor);
 
-// the master end stage (master.ts), 2 in / 2 out; port message = the CLIP setting
+// the master end stage (master.ts), 2 in / 2 out; port message = [CLIP, GAIN]
 class LimProcessor extends AudioWorkletProcessor {
   private lim = new Limiter(sampleRate);
-  constructor() { super(); this.port.onmessage = (ev: MessageEvent<number>) => this.lim.setClip(ev.data); }
+  constructor() { super(); this.port.onmessage = (ev: MessageEvent<[number, number]>) => this.lim.set(...ev.data); }
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     const [l, r] = outputs[0], i = inputs[0];
     if (i.length) { l.set(i[0]); r.set(i[1] ?? i[0]); } else { l.fill(0); r.fill(0); }

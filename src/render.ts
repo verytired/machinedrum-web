@@ -5,7 +5,7 @@
 import { MdEngine, NOUT, VOL } from './dsp/md';
 import { MnmEngine, GATE, LEN } from './dsp/mnm';
 import type { MState } from './mnm';
-import { masterFx, clipOf } from './fx';
+import { masterFx, dynVals } from './fx';
 import { Limiter, measure, type Report } from './master';
 import { stepParams, SLIDE, micro, TRACKS, type State } from './machines';
 import { enter, next, type PatRow } from './song';
@@ -61,7 +61,7 @@ export async function renderWav(st: State, samples: (Float32Array | undefined)[]
   src(0).connect(out); src(2).connect(fx.echoIn); src(4).connect(fx.gateIn);
   const r = await ctx.startRendering(), l = r.getChannelData(0), rr = r.getChannelData(1);
   const lim = new Limiter(SR);
-  lim.setClip(clipOf(st.fx));
+  lim.set(...dynVals(st.fx));
   lim.process(l, rr);
   const L = l.subarray(lim.lat), R = rr.subarray(lim.lat);    // drop the look-ahead delay
   const report: Report & { stems?: (Report & { name: string })[] } = measure(L, R, SR);

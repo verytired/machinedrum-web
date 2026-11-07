@@ -17,10 +17,17 @@ test('limiter: no sample over the ceiling, quiet audio passes untouched (just de
 });
 
 test('soft clip lowers the crest factor, CLIP 0 does nothing', () => {
-  const run = (clip: number) => { const lim = new Limiter(FS), l = sine(100, 1.5, 1), r = l.slice(); lim.setClip(clip); lim.process(l, r); return measure(l, r, FS); };
+  const run = (clip: number) => { const lim = new Limiter(FS), l = sine(100, 1.5, 1), r = l.slice(); lim.set(clip); lim.process(l, r); return measure(l, r, FS); };
   const off = run(0), on = run(127);
   expect(on.lufs).toBeGreaterThan(off.lufs + 0.5);
   expect(on.tp).toBeLessThanOrEqual(-0.9);
+});
+
+test('GAIN: +18 dB at 127 on a quiet signal, the ceiling still holds on a loud one', () => {
+  const q = new Limiter(FS), a = sine(440, 0.01, 1), b = a.slice(); q.set(0, 127); q.process(a, b);
+  expect(measure(a, b, FS).lufs - measure(sine(440, 0.01, 1), sine(440, 0.01, 1), FS).lufs).toBeCloseTo(18, 0);
+  const w = new Limiter(FS), l = sine(60, 0.5, 1), r = l.slice(); w.set(64, 127); w.process(l, r);
+  expect(Math.max(...l.map(Math.abs))).toBeLessThanOrEqual(CEIL);
 });
 
 test('meter: BS.1770 level of a 1 kHz sine, 4x true peak, bands', () => {

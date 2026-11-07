@@ -1,5 +1,5 @@
 // Master bus end stage and meter, shared by the live worklet (md-processor.ts) and EXP WAV (render.ts).
-// Limiter: soft clip (CLIP, 0 = off) -> stereo-linked look-ahead brickwall at CEIL. The gain is the minimum of the
+// Limiter: makeup GAIN -> soft clip (CLIP, 0 = off) -> stereo-linked look-ahead brickwall at CEIL. The gain is the minimum of the
 // needed gains over the look-ahead window, released, then box-averaged over the same window, so it is down to a
 // peak's gain by the time that peak leaves the delay line: no overs, no attack click.
 // Meter: integrated / short-term max loudness (ITU-R BS.1770-4, gated), 4x true peak, and the level per band.
@@ -20,8 +20,8 @@ export class Limiter {
     this.box = new Float64Array(n).fill(1); this.sum = n;
     this.kr = Math.exp(-1 / (REL * fs));
   }
-  // clip 0-127: up to +6 dB of drive into a tanh knee that starts lower the more it is turned up
-  setClip(clip: number) { const c = clip / 127; this.drive = 1 + c; this.knee = clip > 0 ? CEIL * (1 - 0.5 * c) : Infinity; }
+  // clip 0-127: up to +6 dB of drive into a tanh knee that starts lower the more it is turned up; gain 0-127: 0 to +18 dB
+  set(clip: number, gain = 0) { const c = clip / 127; this.drive = (1 + c) * Math.pow(10, gain / 127 * 18 / 20); this.knee = clip > 0 ? CEIL * (1 - 0.5 * c) : Infinity; }
   private sat(x: number) {
     x *= this.drive;
     const a = Math.abs(x), k = this.knee;
